@@ -4,11 +4,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from pymongo import MongoClient
 from bson import ObjectId
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field # Removed field_validator, model_validator as they are not used
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 import os
+
+# --- NEW IMPORTS FOR PYDANTIC V2 FIX ---
+from pydantic import BeforeValidator 
+from typing_extensions import Annotated 
+# ---------------------------------------
 
 # --- 0. CONFIGURATION AND INITIALIZATION ---
 
@@ -17,14 +22,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "e3528e24b8de982dd911041b3c16c21d789176926a
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login")
 
-# MONGODB ATLAS URI: REPLACE THIS WITH YOUR CLOUD CONNECTION STRING
-# For local testing, ensure your MongoDB server is running.
-# main.py
-# This is the final, cloud-ready connection string:
+# MONGODB ATLAS URI:
 MONGO_URI = "mongodb+srv://fastapi_user:ZemQrtyHyyS6hMiL@whiteboardcluster.wajjxyr.mongodb.net/?appName=WhiteboardCluster" 
 DB_NAME = "whiteboard_app_db" 
-# ... rest of your code ... 
-db_client: MongoClient = None
+db_client: Optional[MongoClient] = None
 
 app = FastAPI()
 
@@ -39,17 +40,20 @@ app.add_middleware(
 
 # --- 1. MONGODB CONNECTION AND MODELS ---
 
-# Custom type to handle MongoDB's ObjectId for Pydantic V2 compatibility
-class PyObjectId(ObjectId):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
+# --- PYDANTIC V2 FIX: Custom type for ObjectId handling ---
+def validate_objectid(v):
+    """
+    Validator function to ensure the value is a valid ObjectId structure (or already an ObjectId).
+    """
+    if isinstance(v, ObjectId):
+        return str(v)
+    if not ObjectId.is_valid(v):
+        raise ValueError('Invalid ObjectId format')
+    return str(v)
 
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid ObjectId")
-        return ObjectId(v)
+# Define the PyObjectId custom type using the validator
+PyObjectId = Annotated[str, BeforeValidator(validate_objectid)]
+# ---------------------------------------
 
 class DrawingCommand(BaseModel):
     """Data model for a single collaborative drawing action."""
@@ -63,7 +67,8 @@ class DrawingCommand(BaseModel):
 
 class WhiteboardModel(BaseModel):
     """Schema for storing a Whiteboard session in MongoDB."""
-    id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    # This now uses the PyObjectId defined above
+    id: Optional[PyObjectId] = Field(alias="_id", default=None) 
     session_id: str = Field(...)
     creator_username: str = Field(...)
     canvas_state: List[DrawingCommand] = Field(default_factory=list)
@@ -71,6 +76,7 @@ class WhiteboardModel(BaseModel):
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True
+        # Ensure MongoDB ObjectId is converted to string for JSON output
         json_encoders = {ObjectId: str}
 
 @app.on_event("startup")
@@ -79,7 +85,8 @@ def startup_db_client():
     global db_client
     try:
         db_client = MongoClient(MONGO_URI)
-        app.database = db_client[DB_NAME]
+        # The database is created on first use, so we just reference it here
+        app.database = db_client[DB_NAME] 
         print("Connected to the MongoDB database!")
     except Exception as e:
         print(f"Failed to connect to MongoDB: {e}")
@@ -145,8 +152,10 @@ async def create_session(current_user: str = Depends(get_current_user)):
     board_data = new_board.model_dump(by_alias=True, exclude_none=True)
     result = app.database["whiteboards"].insert_one(board_data)
     
+    # Retrieve the new document to get the MongoDB generated _id
     created_board = app.database["whiteboards"].find_one({"_id": result.inserted_id})
     
+    # This now uses the fixed Pydantic validation:
     return WhiteboardModel.model_validate(created_board)
 
 @app.get("/api/sessions/{session_id}", response_model=WhiteboardModel)
@@ -166,19 +175,33 @@ async def save_canvas_state(
     current_user: str = Depends(get_current_user)
 ):
     """Saves the current list of drawing commands to MongoDB."""
-    # Convert Pydantic models back to dicts for MongoDB storage
-    canvas_state_dicts = [cmd.model_dump() for cmd in state_data]
+    try:
+        print(f"Saving canvas state for session {session_id} by user {current_user}")
+        print(f"Received {len(state_data)} drawing commands")
+        
+        # Convert Pydantic models to dictionaries for MongoDB
+        canvas_state_dicts = [cmd.model_dump() for cmd in state_data]
+        
+        # Update the session in MongoDB
+        update_result = app.database["whiteboards"].update_one(
+            {"session_id": session_id},
+            {"$set": {"canvas_state": canvas_state_dicts}}
+        )
 
-    update_result = app.database["whiteboards"].update_one(
-        {"session_id": session_id},
-        {"$set": {"canvas_state": canvas_state_dicts}}
-    )
+        if update_result.modified_count == 0 and update_result.matched_count == 0:
+            print(f"Session {session_id} not found in database")
+            raise HTTPException(status_code=404, detail="Whiteboard session not found")
+        
+        print(f"Successfully saved canvas state for session {session_id}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error saving canvas state: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    if update_result.modified_count == 0 and update_result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Whiteboard session not found")
 
-
-# --- 4. WEBSOCKET SIGNALING SERVER ---
+# --- 4. WEBSOCKET SIGNALING SERVER (ConnectionManager remains unchanged) ---
 
 class ConnectionManager:
     """Manages active WebSocket connections for WebRTC signaling."""

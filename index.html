@@ -72,7 +72,10 @@
 
         // --- DEPLOYMENT CONFIGURATION ---
         // IMPORTANT: CHANGE 'localhost:8000' to your deployed server address (e.g., 'https://my-app.com')
-        const DEPLOYED_HOST = 'localhost:8000'; 
+        // index.html <script>
+// The browser will automatically handle the 'https://' and 'wss://'
+        const DEPLOYED_HOST = 'whiteboard-axcw.onrender.com'; 
+// ... the rest of your code ... 
         const PROTOCOL = DEPLOYED_HOST.startsWith('localhost') ? 'http' : 'https';
         const WS_PROTOCOL = DEPLOYED_HOST.startsWith('localhost') ? 'ws' : 'wss';
         const API_BASE = `${PROTOCOL}://${DEPLOYED_HOST}/api`; 
@@ -143,9 +146,24 @@
         }
         
         async function handleSaveCanvas() {
-            if (!currentToken || !currentSessionId) return alert("Please join a session first.");
+            if (!currentToken || !currentSessionId) {
+                alert("Please join a session first.");
+                return;
+            }
+            
+            if (drawingHistory.length === 0) {
+                alert("Nothing to save - canvas is empty.");
+                return;
+            }
+            
+            // Disable save button during save operation
+            const saveBtn = document.getElementById('btnSave');
+            saveBtn.disabled = true;
+            sessionStatus.textContent = "Saving canvas...";
             
             try {
+                console.log(`Saving ${drawingHistory.length} drawing commands to session ${currentSessionId}`);
+                
                 const response = await fetch(`${API_BASE}/sessions/${currentSessionId}/save`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
@@ -153,14 +171,32 @@
                 });
 
                 if (response.status === 204) {
-                    sessionStatus.textContent = `Session ${currentSessionId} saved successfully!`;
+                    sessionStatus.textContent = `✓ Session ${currentSessionId} saved successfully!`;
+                    console.log("Canvas saved successfully!");
                 } else if (response.status === 404) {
-                    alert("Session not found.");
+                    const errorData = await response.json().catch(() => ({ detail: "Session not found" }));
+                    alert(`Session not found: ${errorData.detail || "Please create or join a session first."}`);
+                    sessionStatus.textContent = "Save failed: Session not found.";
+                } else if (response.status === 401) {
+                    alert("Authentication failed. Please log in again.");
+                    sessionStatus.textContent = "Save failed: Authentication error.";
+                } else if (response.status === 422) {
+                    const errorData = await response.json().catch(() => ({ detail: "Validation error" }));
+                    console.error("Validation error:", errorData);
+                    alert(`Failed to save: ${errorData.detail || "Invalid data format."}`);
+                    sessionStatus.textContent = "Save failed: Validation error.";
                 } else {
-                    alert("Failed to save canvas state.");
+                    const errorText = await response.text().catch(() => "Unknown error");
+                    console.error("Save failed with status:", response.status, errorText);
+                    alert(`Failed to save canvas state. Status: ${response.status}`);
+                    sessionStatus.textContent = `Save failed (Status: ${response.status}).`;
                 }
             } catch (error) {
                 console.error('Save error:', error);
+                alert(`Failed to save canvas: ${error.message || "Network error. Check console for details."}`);
+                sessionStatus.textContent = "Save failed: Network error.";
+            } finally {
+                saveBtn.disabled = false;
             }
         }
 
