@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field # Removed field_validator, model_validator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import os
 
 # --- NEW IMPORTS FOR PYDANTIC V2 FIX ---
@@ -22,12 +23,12 @@ SECRET_KEY = os.getenv("SECRET_KEY", "e3528e24b8de982dd911041b3c16c21d789176926a
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login")
 
-# MONGODB ATLAS URI:
-MONGO_URI = "mongodb+srv://fastapi_user:ZemQrtyHyyS6hMiL@whiteboardcluster.wajjxyr.mongodb.net/?appName=WhiteboardCluster" 
-DB_NAME = "whiteboard_app_db" 
+# MONGODB ATLAS URI: Use environment variable if available, otherwise use default
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://fastapi_user:ZemQrtyHyyS6hMiL@whiteboardcluster.wajjxyr.mongodb.net/?appName=WhiteboardCluster") 
+DB_NAME = os.getenv("DB_NAME", "whiteboard_app_db") 
 db_client: Optional[MongoClient] = None
 
-app = FastAPI()
+app = FastAPI(title="Whiteboard Collaboration App")
 
 # CORS: Allows any origin to access the API (essential for development and deployment)
 app.add_middleware(
@@ -37,6 +38,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Health check endpoint for Render
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring."""
+    return {"status": "healthy", "service": "whiteboard-app"}
+
+# Serve static files (for index.html)
+@app.get("/")
+async def read_root():
+    """Serve the main HTML file."""
+    if os.path.exists("index.html"):
+        return FileResponse("index.html")
+    else:
+        raise HTTPException(status_code=500, detail="index.html not found")
 
 # --- 1. MONGODB CONNECTION AND MODELS ---
 
