@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Collaborative Whiteboard</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin: 20px; background-color: #f4f4f9; }
+        #app-container { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); }
+        #whiteboard { border: 2px solid #333; cursor: crosshair; background-color: white; display: block; }
+        .controls { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; }
+        .controls input, .controls button { padding: 8px; border-radius: 4px; border: 1px solid #ccc; }
+        .status-bar { margin-top: 10px; font-size: 0.9em; color: #555; }
+        .color-picker { width: 30px; height: 30px; padding: 0; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <h1>Collaborative Whiteboard</h1>
+
+        <div class="controls">
+            <input type="text" id="username" placeholder="Username" value="user_A">
+            <button id="btnLogin">1. Login</button>
+            <span id="authStatus">Not logged in.</span>
+        </div>
+
+        <div class="controls">
+            <button id="btnCreate">2. Create Session</button>
+            <input type="text" id="sessionIdInput" placeholder="Enter Session ID">
+            <button id="btnJoin" disabled>3. Join Session</button>
+            <input type="color" id="colorPicker" class="color-picker" value="#000000">
+            <input type="range" id="sizeSlider" min="1" max="15" value="5">
+            <button id="btnSave" disabled>4. Save Canvas</button>
+        </div>
+
+        <canvas id="whiteboard" width="800" height="600"></canvas>
+        <div class="status-bar">
+            **Session:** <span id="sessionStatus">N/A</span> |
+            **WebRTC Status:** <span id="webrtcStatus" style="color: red;">Disconnected</span> |
+            **User:** <span id="currentUserName"></span>
+        </div>
+    </div>
+
+    <script>
+        // --- Global State ---
+        const CANVAS_WIDTH = 800;
+        const CANVAS_HEIGHT = 600;
+        const canvas = document.getElementById('whiteboard');
+        const ctx = canvas.getContext('2d');
+        
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        let drawingHistory = []; // Stores all commands for saving/loading
+        
+        let peerConnection;
+        let dataChannel;
+        let ws; // WebSocket for signaling
+        
+        // App State
+        let currentToken = null;
+        let currentSessionId = null;
+        let currentUserName = '';
+
+        // --- UI Element References ---
+        const authStatus = document.getElementById('authStatus');
+        const sessionStatus = document.getElementById('sessionStatus');
+        const webrtcStatus = document.getElementById('webrtcStatus');
+        const currentUserNameEl = document.getElementById('currentUserName');
+        const sessionIdInput = document.getElementById('sessionIdInput');
+        
+        // --- API & Auth Helpers ---
+        const API_BASE = 'http://localhost:8000/api'; 
+        
+        function getAuthHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            };
+        }
+
+        async function handleLogin() {
+            const username = document.getElementById('username').value;
+            if (!username) return alert("Please enter a username.");
+
+            try {
+                const response = await fetch(`${API_BASE}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    currentToken = data.access_token;
+                    currentUserName = data.username;
+                    authStatus.textContent = `Logged in as: ${currentUserName}`;
+                    currentUserNameEl.textContent = currentUserName;
+                    document.getElementById('btnJoin').disabled = false;
+                    document.getElementById('btnCreate').disabled = false;
+                } else {
+                    alert("Login failed.");
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                alert("Login failed. Is the FastAPI server running?");
+            }
+        }
+
+        async function handleCreateSession() {
+            if (!currentToken) return alert("Please log in first.");
+
+            try {
+                const response = await fetch(`${API_BASE}/sessions`, {
+                    method: 'POST',
+                    headers: getAuthHeaders()
+                });
+
+                if (response.ok) {
+                    const session = await response.json();
+                    currentSessionId = session.session_id;
+                    sessionIdInput.value = currentSessionId;
+                    handleJoinSession(true); // Auto-join after creating
+                } else {
+                    alert("Failed to create session.");
+                }
+            } catch (error) {
+                console.error('Create session error:', error);
+            }
+        }
+        
+        async function handleSaveCanvas() {
+            if (!currentToken || !currentSessionId) return alert("Please join a session first.");
+            
+            try {
+                const response = await fetch(`${API_BASE}/sessions/${currentSessionId}/save`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify(drawingHistory) // Send the entire history array
+                });
+
+                if (response.status === 204) {
+                    sessionStatus.textContent = `Session ${currentSessionId} saved!`;
+                } else if (response.status === 404) {
+                    alert("Session not found.");
+                } else {
+                    alert("Failed to save canvas state.");
+                }
+            } catch (error) {
+                console.error('Save error:', error);
+            }
+        }
+
+        // --- Canvas Drawing Logic ---
+        
+        function drawLine(x1, y1, x2, y2, color, size) {
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = size;
+            ctx.lineCap = 'round';
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+
+        function handleRemoteDrawing(event) {
+            try {
+                const cmd = JSON.parse(event.data);
+                if (cmd.x1 !== undefined) {
+                    drawLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.size);
+                    drawingHistory.push(cmd); // Add remote command to history
+                }
+            } catch (e) {
+                console.error("Failed to parse remote drawing data:", e);
+            }
+        }
+
+        function setupCanvasDrawing() {
+            canvas.addEventListener('mousedown', (e) => {
+                isDrawing = true;
+                [lastX, lastY] = [e.offsetX, e.offsetY];
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (!isDrawing) return;
+                
+                const color = document.getElementById('colorPicker').value;
+                const size = parseInt(document.getElementById('sizeSlider').value);
+
+                // Draw locally
+                drawLine(lastX, lastY, e.offsetX, e.offsetY, color, size);
+                
+                const command = {
+                    x1: lastX, y1: lastY, 
+                    x2: e.offsetX, y2: e.offsetY, 
+                    color, size
+                };
+
+                // Add to history and send via WebRTC Data Channel
+                drawingHistory.push(command); 
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify(command));
+                }
+
+                [lastX, lastY] = [e.offsetX, e.offsetY];
+            });
+
+            canvas.addEventListener('mouseup', () => isDrawing = false);
+            canvas.addEventListener('mouseout', () => isDrawing = false);
+        }
+
+        function loadCanvasState(commands) {
+            // Clear the canvas and history before loading
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            drawingHistory = []; 
+            
+            commands.forEach(cmd => {
+                drawLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.size);
+                drawingHistory.push(cmd);
+            });
+            console.log(`Loaded ${commands.length} drawing commands.`);
+        }
+
+        // --- WebRTC Signaling and Peer Connection ---
+        
+        async function handleJoinSession(isInitiator = false) {
+            currentSessionId = sessionIdInput.value.trim();
+            if (!currentSessionId) return alert("Please enter a Session ID.");
+            if (!currentToken) return alert("Please log in first.");
+
+            sessionStatus.textContent = `Joining session: ${currentSessionId}...`;
+            document.getElementById('btnSave').disabled = true;
+
+            // 1. Load Initial Canvas State from API
+            try {
+                const response = await fetch(`${API_BASE}/sessions/${currentSessionId}`, { headers: getAuthHeaders() });
+                if (!response.ok) throw new Error("Session load failed.");
+                const sessionData = await response.json();
+                loadCanvasState(sessionData.canvas_state); // Restore drawing
+            } catch (error) {
+                console.error("Error loading session:", error);
+                sessionStatus.textContent = `Session ${currentSessionId} load failed.`;
+                return;
+            }
+            
+            // 2. Setup WebSocket for Signaling
+            ws = new WebSocket(`ws://localhost:8000/ws/${currentSessionId}`);
+            
+            ws.onopen = () => {
+                console.log("WebSocket connected. Starting WebRTC signaling...");
+                setupPeerConnection(isInitiator);
+            };
+            
+            ws.onmessage = async (event) => {
+                const signal = JSON.parse(event.data);
+
+                if (signal.type === 'offer') {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    ws.send(JSON.stringify(peerConnection.localDescription));
+                } else if (signal.type === 'answer') {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+                } else if (signal.type === 'candidate') {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                    } catch (e) {
+                        console.error('Error adding received ICE candidate:', e);
+                    }
+                }
+            };
+            
+            ws.onclose = () => console.log("WebSocket closed.");
+            ws.onerror = (err) => console.error("WebSocket error:", err);
+            
+            sessionStatus.textContent = `Connected to session ${currentSessionId}.`;
+            document.getElementById('btnSave').disabled = false;
+        }
+
+        function setupPeerConnection(isInitiator) {
+            peerConnection = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+                }
+            };
+            
+            peerConnection.onconnectionstatechange = (event) => {
+                webrtcStatus.textContent = peerConnection.connectionState;
+                webrtcStatus.style.color = (peerConnection.connectionState === 'connected') ? 'green' : 'red';
+                if (peerConnection.connectionState === 'connected') {
+                    console.log("WebRTC P2P Data Channel established!");
+                }
+            };
+            
+            if (isInitiator) {
+                // Initiator creates the data channel
+                dataChannel = peerConnection.createDataChannel('whiteboard-channel');
+                dataChannel.onopen = (e) => console.log('Data Channel Open (Initiator)!');
+                dataChannel.onmessage = handleRemoteDrawing;
+                
+                peerConnection.createOffer().then(offer => {
+                    peerConnection.setLocalDescription(offer);
+                    ws.send(JSON.stringify(offer));
+                });
+            } else {
+                // Receiver listens for the data channel
+                peerConnection.ondatachannel = (event) => {
+                    dataChannel = event.channel;
+                    dataChannel.onopen = (e) => console.log('Data Channel Open (Receiver)!');
+                    dataChannel.onmessage = handleRemoteDrawing;
+                };
+            }
+        }
+        
+        // --- Initialization and Event Listeners ---
+        document.getElementById('btnLogin').addEventListener('click', handleLogin);
+        document.getElementById('btnCreate').addEventListener('click', handleCreateSession);
+        document.getElementById('btnJoin').addEventListener('click', () => handleJoinSession(false)); // Non-initiator
+        document.getElementById('btnSave').addEventListener('click', handleSaveCanvas);
+        
+        setupCanvasDrawing(); // Initialize canvas interaction
+    </script>
+</body>
+</html>
