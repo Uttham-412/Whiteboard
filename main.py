@@ -4,31 +4,34 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from pymongo import MongoClient
 from bson import ObjectId
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, Field, field_validator, model_validator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from fastapi.middleware.cors import CORSMiddleware # Crucial for front-end development
+from fastapi.middleware.cors import CORSMiddleware
+import os
 
 # --- 0. CONFIGURATION AND INITIALIZATION ---
 
-# Security Setup
-SECRET_KEY = "e3528e24b8de982dd911041b3c16c21d789176926a0496f22e6ba1d1ed77ed30"
+# SECURITY: Use environment variables in a production deployment
+SECRET_KEY = os.getenv("SECRET_KEY", "e3528e24b8de982dd911041b3c16c21d789176926a0496f22e6ba1d1ed77ed30")
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login")
 
-# MongoDB Setup
-MONGO_URI = "mongodb://localhost:27017/" 
+# MONGODB ATLAS URI: REPLACE THIS WITH YOUR CLOUD CONNECTION STRING
+# For local testing, ensure your MongoDB server is running.
+# main.py
+# This is the final, cloud-ready connection string:
+MONGO_URI = "mongodb+srv://fastapi_user:ZemQrtyHyyS6hMiL@whiteboardcluster.wajjxyr.mongodb.net/?appName=WhiteboardCluster" 
 DB_NAME = "whiteboard_app_db" 
-db_client: Optional[MongoClient] = None
+# ... rest of your code ... 
+db_client: MongoClient = None
 
 app = FastAPI()
 
-# Add CORS middleware to allow the HTML file to interact with the FastAPI server
-# In production, restrict origins to only your domain.
+# CORS: Allows any origin to access the API (essential for development and deployment)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins during development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,42 +39,27 @@ app.add_middleware(
 
 # --- 1. MONGODB CONNECTION AND MODELS ---
 
-# Pydantic utility class to handle MongoDB's ObjectId
+# Custom type to handle MongoDB's ObjectId for Pydantic V2 compatibility
 class PyObjectId(ObjectId):
     @classmethod
-    def __get_pydantic_core_schema__(cls, source_type, handler):
-        from pydantic_core import core_schema
-        return core_schema.union_schema([
-            core_schema.is_instance_schema(ObjectId),
-            core_schema.chain_schema([
-                core_schema.str_schema(),
-                core_schema.no_info_plain_validator_function(cls.validate),
-            ])
-        ])
-    
+    def __get_validators__(cls):
+        yield cls.validate
+
     @classmethod
     def validate(cls, v):
-        if isinstance(v, ObjectId):
-            return str(v)
-        if isinstance(v, str):
-            if not ObjectId.is_valid(v):
-                raise ValueError("Invalid ObjectId")
-            return str(v)
-        raise ValueError("Invalid ObjectId")
-    
-    @classmethod
-    def __get_pydantic_json_schema__(cls, field_schema, handler):
-        field_schema.update(type="string")
-        return field_schema
+        if not ObjectId.is_valid(v):
+            raise ValueError("Invalid ObjectId")
+        return ObjectId(v)
 
 class DrawingCommand(BaseModel):
-    """A single line segment or drawing action sent over WebRTC."""
+    """Data model for a single collaborative drawing action."""
     x1: float
     y1: float
     x2: float
     y2: float
     color: str
-    size: int # stroke width
+    size: int
+    tool: str = Field(default='pen') # Supports 'pen', 'eraser'
 
 class WhiteboardModel(BaseModel):
     """Schema for storing a Whiteboard session in MongoDB."""
@@ -80,19 +68,22 @@ class WhiteboardModel(BaseModel):
     creator_username: str = Field(...)
     canvas_state: List[DrawingCommand] = Field(default_factory=list)
 
-    model_config = {
-        "populate_by_name": True,
-        "arbitrary_types_allowed": True,
-        "json_encoders": {ObjectId: str}
-    }
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}
 
 @app.on_event("startup")
 def startup_db_client():
     """Connects to MongoDB."""
     global db_client
-    db_client = MongoClient(MONGO_URI)
-    app.database = db_client[DB_NAME]
-    print("Connected to the MongoDB database!")
+    try:
+        db_client = MongoClient(MONGO_URI)
+        app.database = db_client[DB_NAME]
+        print("Connected to the MongoDB database!")
+    except Exception as e:
+        print(f"Failed to connect to MongoDB: {e}")
+        # Optionally exit or handle failure
 
 @app.on_event("shutdown")
 def shutdown_db_client():
@@ -117,7 +108,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     return encoded_jwt
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
-    """Dependency function to validate JWT and return the authenticated username."""
+    """Dependency function to validate JWT."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
@@ -130,7 +121,6 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 @app.post("/api/login")
 async def login_for_access_token(user_in: UserIn):
     """Generates a JWT token for a given username."""
-    # NOTE: In a real app, you'd check a password against a hashed one stored in MongoDB.
     access_token_expires = timedelta(minutes=30)
     access_token = create_access_token(
         data={"username": user_in.username}, expires_delta=access_token_expires
@@ -142,7 +132,7 @@ async def login_for_access_token(user_in: UserIn):
 
 @app.post("/api/sessions", response_model=WhiteboardModel)
 async def create_session(current_user: str = Depends(get_current_user)):
-    """Creates a new whiteboard session and saves it to MongoDB."""
+    """Creates a new whiteboard session."""
     session_id = str(uuid.uuid4()).split('-')[0].upper()
     
     new_board = WhiteboardModel(
@@ -151,6 +141,7 @@ async def create_session(current_user: str = Depends(get_current_user)):
         canvas_state=[]
     )
     
+    # Use model_dump(by_alias=True) for MongoDB compatibility
     board_data = new_board.model_dump(by_alias=True, exclude_none=True)
     result = app.database["whiteboards"].insert_one(board_data)
     
@@ -175,7 +166,7 @@ async def save_canvas_state(
     current_user: str = Depends(get_current_user)
 ):
     """Saves the current list of drawing commands to MongoDB."""
-    # Convert Pydantic models back to simple dicts for MongoDB storage
+    # Convert Pydantic models back to dicts for MongoDB storage
     canvas_state_dicts = [cmd.model_dump() for cmd in state_data]
 
     update_result = app.database["whiteboards"].update_one(
@@ -185,7 +176,6 @@ async def save_canvas_state(
 
     if update_result.modified_count == 0 and update_result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Whiteboard session not found")
-    # 204 No Content is the standard response for a successful update that returns no body.
 
 
 # --- 4. WEBSOCKET SIGNALING SERVER ---
@@ -219,14 +209,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     try:
         while True:
-            # Receive WebRTC signaling messages (Offer, Answer, ICE Candidates)
             data = await websocket.receive_text()
-
-            # Relay the signaling message to other peers in the room
             await manager.broadcast_signal(session_id, data, sender=websocket)
 
     except WebSocketDisconnect:
         manager.disconnect(session_id, websocket)
         print(f"User disconnected from session: {session_id}")
-
-# To run this server: uvicorn main:app --reload

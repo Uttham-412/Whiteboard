@@ -4,10 +4,12 @@
     <title>WebRTC Collaborative Whiteboard</title>
     <style>
         body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin: 20px; background-color: #f4f4f9; }
-        #app-container { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); }
+        #app-container { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2); }
         #whiteboard { border: 2px solid #333; cursor: crosshair; background-color: white; display: block; }
-        .controls { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; }
-        .controls input, .controls button { padding: 8px; border-radius: 4px; border: 1px solid #ccc; }
+        .controls { margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        .controls input, .controls button { padding: 8px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; transition: background-color 0.2s; }
+        .controls button:hover { background-color: #e0e0e0; }
+        .controls button.active { background-color: #5cb85c; color: white; border-color: #4cae4c; }
         .status-bar { margin-top: 10px; font-size: 0.9em; color: #555; }
         .color-picker { width: 30px; height: 30px; padding: 0; border: none; cursor: pointer; }
     </style>
@@ -26,9 +28,16 @@
             <button id="btnCreate">2. Create Session</button>
             <input type="text" id="sessionIdInput" placeholder="Enter Session ID">
             <button id="btnJoin" disabled>3. Join Session</button>
+        </div>
+
+        <div class="controls">
+            <button id="btnPen" class="active">Pen</button>
+            <button id="btnEraser">Eraser</button>
             <input type="color" id="colorPicker" class="color-picker" value="#000000">
             <input type="range" id="sizeSlider" min="1" max="15" value="5">
+            
             <button id="btnSave" disabled>4. Save Canvas</button>
+            <button id="btnClear">Clear Local</button>
         </div>
 
         <canvas id="whiteboard" width="800" height="600"></canvas>
@@ -49,16 +58,24 @@
         let isDrawing = false;
         let lastX = 0;
         let lastY = 0;
-        let drawingHistory = []; // Stores all commands for saving/loading
+        let drawingHistory = []; 
+        let currentTool = 'pen'; // State for pen vs. eraser
         
         let peerConnection;
         let dataChannel;
-        let ws; // WebSocket for signaling
+        let ws; 
         
         // App State
         let currentToken = null;
         let currentSessionId = null;
         let currentUserName = '';
+
+        // --- DEPLOYMENT CONFIGURATION ---
+        // IMPORTANT: CHANGE 'localhost:8000' to your deployed server address (e.g., 'https://my-app.com')
+        const DEPLOYED_HOST = 'localhost:8000'; 
+        const PROTOCOL = DEPLOYED_HOST.startsWith('localhost') ? 'http' : 'https';
+        const WS_PROTOCOL = DEPLOYED_HOST.startsWith('localhost') ? 'ws' : 'wss';
+        const API_BASE = `${PROTOCOL}://${DEPLOYED_HOST}/api`; 
 
         // --- UI Element References ---
         const authStatus = document.getElementById('authStatus');
@@ -68,8 +85,6 @@
         const sessionIdInput = document.getElementById('sessionIdInput');
         
         // --- API & Auth Helpers ---
-        const API_BASE = 'http://localhost:8000/api'; 
-        
         function getAuthHeaders() {
             return {
                 'Content-Type': 'application/json',
@@ -101,7 +116,7 @@
                 }
             } catch (error) {
                 console.error('Login error:', error);
-                alert("Login failed. Is the FastAPI server running?");
+                alert("Login failed. Check server address/CORS or if the FastAPI server is running.");
             }
         }
 
@@ -118,7 +133,7 @@
                     const session = await response.json();
                     currentSessionId = session.session_id;
                     sessionIdInput.value = currentSessionId;
-                    handleJoinSession(true); // Auto-join after creating
+                    handleJoinSession(true); // Auto-join and set as initiator
                 } else {
                     alert("Failed to create session.");
                 }
@@ -138,7 +153,7 @@
                 });
 
                 if (response.status === 204) {
-                    sessionStatus.textContent = `Session ${currentSessionId} saved!`;
+                    sessionStatus.textContent = `Session ${currentSessionId} saved successfully!`;
                 } else if (response.status === 404) {
                     alert("Session not found.");
                 } else {
@@ -149,23 +164,35 @@
             }
         }
 
+        function clearCanvas() {
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            drawingHistory = []; // Clear local history
+            sessionStatus.textContent = `Canvas cleared locally. (Must save to persist!)`;
+        }
+
         // --- Canvas Drawing Logic ---
-        
-        function drawLine(x1, y1, x2, y2, color, size) {
+        function drawLine(x1, y1, x2, y2, color, size, tool) {
             ctx.beginPath();
+            
+            // Set globalCompositeOperation for eraser effect
+            ctx.globalCompositeOperation = (tool === 'eraser') ? 'destination-out' : 'source-over'; 
+
             ctx.strokeStyle = color;
             ctx.lineWidth = size;
             ctx.lineCap = 'round';
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
             ctx.stroke();
+
+            // Reset composite operation to default
+            ctx.globalCompositeOperation = 'source-over';
         }
 
         function handleRemoteDrawing(event) {
             try {
                 const cmd = JSON.parse(event.data);
                 if (cmd.x1 !== undefined) {
-                    drawLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.size);
+                    drawLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.size, cmd.tool);
                     drawingHistory.push(cmd); // Add remote command to history
                 }
             } catch (e) {
@@ -175,23 +202,30 @@
 
         function setupCanvasDrawing() {
             canvas.addEventListener('mousedown', (e) => {
+                // Only start drawing if a session is active
+                if (!currentSessionId) return;
                 isDrawing = true;
                 [lastX, lastY] = [e.offsetX, e.offsetY];
             });
 
             canvas.addEventListener('mousemove', (e) => {
-                if (!isDrawing) return;
+                if (!isDrawing || !currentSessionId) return;
                 
                 const color = document.getElementById('colorPicker').value;
                 const size = parseInt(document.getElementById('sizeSlider').value);
 
+                // For the eraser, use a white stroke color or the canvas background color
+                const strokeColor = (currentTool === 'eraser') ? 'white' : color;
+                
                 // Draw locally
-                drawLine(lastX, lastY, e.offsetX, e.offsetY, color, size);
+                drawLine(lastX, lastY, e.offsetX, e.offsetY, strokeColor, size, currentTool);
                 
                 const command = {
                     x1: lastX, y1: lastY, 
                     x2: e.offsetX, y2: e.offsetY, 
-                    color, size
+                    color: strokeColor, 
+                    size: size,
+                    tool: currentTool // Send the tool used!
                 };
 
                 // Add to history and send via WebRTC Data Channel
@@ -208,12 +242,12 @@
         }
 
         function loadCanvasState(commands) {
-            // Clear the canvas and history before loading
+            // Clear and reset state before loading
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
             drawingHistory = []; 
             
             commands.forEach(cmd => {
-                drawLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.size);
+                drawLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.size, cmd.tool);
                 drawingHistory.push(cmd);
             });
             console.log(`Loaded ${commands.length} drawing commands.`);
@@ -237,18 +271,19 @@
                 loadCanvasState(sessionData.canvas_state); // Restore drawing
             } catch (error) {
                 console.error("Error loading session:", error);
-                sessionStatus.textContent = `Session ${currentSessionId} load failed.`;
+                sessionStatus.textContent = `Session ${currentSessionId} load failed. Check ID and server logs.`;
                 return;
             }
             
             // 2. Setup WebSocket for Signaling
-            ws = new WebSocket(`ws://localhost:8000/ws/${currentSessionId}`);
+            ws = new WebSocket(`${WS_PROTOCOL}://${DEPLOYED_HOST}/ws/${currentSessionId}`);
             
             ws.onopen = () => {
                 console.log("WebSocket connected. Starting WebRTC signaling...");
                 setupPeerConnection(isInitiator);
             };
             
+            // WebSocket Message Handler (Signaling Exchange)
             ws.onmessage = async (event) => {
                 const signal = JSON.parse(event.data);
 
@@ -256,7 +291,7 @@
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
                     const answer = await peerConnection.createAnswer();
                     await peerConnection.setLocalDescription(answer);
-                    ws.send(JSON.stringify(peerConnection.localDescription));
+                    ws.send(JSON.stringify(peerConnection.localDescription)); // Send Answer back
                 } else if (signal.type === 'answer') {
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
                 } else if (signal.type === 'candidate') {
@@ -271,7 +306,7 @@
             ws.onclose = () => console.log("WebSocket closed.");
             ws.onerror = (err) => console.error("WebSocket error:", err);
             
-            sessionStatus.textContent = `Connected to session ${currentSessionId}.`;
+            sessionStatus.textContent = `Connected to session ${currentSessionId}. WebRTC connecting...`;
             document.getElementById('btnSave').disabled = false;
         }
 
@@ -286,12 +321,9 @@
                 }
             };
             
-            peerConnection.onconnectionstatechange = (event) => {
+            peerConnection.onconnectionstatechange = () => {
                 webrtcStatus.textContent = peerConnection.connectionState;
                 webrtcStatus.style.color = (peerConnection.connectionState === 'connected') ? 'green' : 'red';
-                if (peerConnection.connectionState === 'connected') {
-                    console.log("WebRTC P2P Data Channel established!");
-                }
             };
             
             if (isInitiator) {
@@ -302,7 +334,7 @@
                 
                 peerConnection.createOffer().then(offer => {
                     peerConnection.setLocalDescription(offer);
-                    ws.send(JSON.stringify(offer));
+                    ws.send(JSON.stringify(offer)); // Send Offer
                 });
             } else {
                 // Receiver listens for the data channel
@@ -317,8 +349,20 @@
         // --- Initialization and Event Listeners ---
         document.getElementById('btnLogin').addEventListener('click', handleLogin);
         document.getElementById('btnCreate').addEventListener('click', handleCreateSession);
-        document.getElementById('btnJoin').addEventListener('click', () => handleJoinSession(false)); // Non-initiator
+        document.getElementById('btnJoin').addEventListener('click', () => handleJoinSession(false)); 
         document.getElementById('btnSave').addEventListener('click', handleSaveCanvas);
+        document.getElementById('btnClear').addEventListener('click', clearCanvas);
+
+        // Tool Switching Logic
+        function setTool(toolName) {
+            currentTool = toolName;
+            document.getElementById('btnPen').classList.remove('active');
+            document.getElementById('btnEraser').classList.remove('active');
+            document.getElementById(`btn${toolName.charAt(0).toUpperCase() + toolName.slice(1)}`).classList.add('active');
+            console.log(`Tool switched to: ${toolName}`);
+        }
+        document.getElementById('btnPen').addEventListener('click', () => setTool('pen'));
+        document.getElementById('btnEraser').addEventListener('click', () => setTool('eraser'));
         
         setupCanvasDrawing(); // Initialize canvas interaction
     </script>
