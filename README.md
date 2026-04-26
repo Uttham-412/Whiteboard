@@ -80,11 +80,4 @@ The project includes configuration files (`render.yaml` and `start.sh`) for stra
 * **Build Command:** `pip install -r requirements.txt`
 * **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
-### Critical Post-Deployment Step
-
-The frontend JavaScript needs to know the deployed URL for WebSocket signaling. After deploying, you **must** update the `DEPLOYED_HOST` constant in `index.html` (around line 77) to your live service URL:
-
-```javascript
-// index.html <script>
-const DEPLOYED_HOST = 'your-app-name.onrender.com'; // <-- UPDATE THIS
-// ... the rest of your code ...
+The application uses `location.host` to dynamically connect to the WebSocket server, so no manual URL updates are required in the code after deployment. Just ensure your `MONGO_URI` is correctly set in the Render environment variables.
