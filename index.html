@@ -1,1315 +1,539 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>WebRTC Collaborative Whiteboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CollabCanvas Pro | Creative Workspace</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         :root {
-            --bg-1: #0f1020;
-            --bg-2: #1a1b3a;
-            --bg-3: #0b7285;
-            --glass: rgba(255, 255, 255, 0.08);
-            --glass-strong: rgba(255, 255, 255, 0.16);
-            --border: rgba(255, 255, 255, 0.18);
-            --text: #e6e6f0;
-            --muted: #a3a7bd;
-            --accent: #7c3aed;
-            --accent-2: #06b6d4;
-            --success: #22c55e;
-            --danger: #ef4444;
-            --shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
-            --radius: 16px;
-            --radius-sm: 12px;
-            --radius-xs: 10px;
-            --blur: 16px;
-            --transition: 180ms ease;
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --primary-glow: rgba(99, 102, 241, 0.2);
+            --bg-dark: #020617;
+            --surface: rgba(15, 23, 42, 0.8);
+            --surface-hover: rgba(30, 41, 59, 0.9);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #f8fafc;
+            --text-muted: #64748b;
+            --accent-cyan: #22d3ee;
+            --radius-xl: 20px;
+            --radius-lg: 12px;
+            --shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
 
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
 
         body {
-            font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-dark);
             color: var(--text);
-            min-height: 100svh;
-            margin: 0;
-            padding: 0;
-            background: radial-gradient(1200px 800px at 15% 10%, #1e293b 0%, transparent 60%),
-                        radial-gradient(1000px 700px at 85% 20%, rgba(124,58,237,.25) 0%, transparent 60%),
-                        radial-gradient(900px 900px at 50% 100%, rgba(6,182,212,.25) 0%, transparent 50%),
-                        linear-gradient(160deg, var(--bg-1), var(--bg-2));
-            animation: bgShift 14s ease-in-out infinite alternate;
-            overflow-x: hidden;
-        }
-
-        @keyframes bgShift {
-            from { background-position: 0 0, 0 0, 0 0, 0 0; }
-            to   { background-position: 10% -5%, -10% 8%, 0% -6%, 0 0; }
-        }
-
-        #app-container {
-            width: 100%;
-            min-height: 100vh;
-            background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.05));
-            backdrop-filter: blur(var(--blur));
-            -webkit-backdrop-filter: blur(var(--blur));
-            padding: 0;
-            border-radius: 0;
-            border: none;
-            box-shadow: none;
-            position: relative;
+            height: 100vh;
             overflow: hidden;
-            transform: translateZ(0);
-            animation: fadeIn 400ms ease-out both;
             display: flex;
             flex-direction: column;
         }
 
-        #app-container::before {
-            content: "";
+        /* --- Animations --- */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+
+        /* --- Auth Overlay --- */
+        #auth-overlay {
+            position: fixed; inset: 0; z-index: 1000;
+            background: radial-gradient(circle at 50% 50%, #0f172a 0%, #020617 100%);
+            display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(10px); transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #auth-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+        .auth-card {
+            background: var(--surface); border: 1px solid var(--border);
+            padding: 48px; border-radius: 32px; width: 440px; text-align: center;
+            box-shadow: var(--shadow); animation: fadeIn 0.8s ease-out;
+        }
+        .auth-card h1 { font-size: 38px; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.03em; background: linear-gradient(to bottom right, #fff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .auth-card p { color: var(--text-muted); margin-bottom: 32px; line-height: 1.6; }
+
+        .btn-primary {
+            width: 100%; background: var(--primary); color: white; border: none;
+            padding: 14px; border-radius: var(--radius-lg); font-size: 16px; font-weight: 600;
+            cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 14px var(--primary-glow);
+        }
+        .btn-primary:hover { background: var(--primary-light); transform: translateY(-2px); box-shadow: 0 8px 20px var(--primary-glow); }
+
+        .input-pro {
+            width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--border);
+            padding: 14px 18px; border-radius: var(--radius-lg); color: white; margin-bottom: 12px;
+            outline: none; transition: all 0.2s; font-family: inherit;
+        }
+        .input-pro:focus { border-color: var(--primary); background: rgba(0,0,0,0.3); }
+
+        /* --- Main App UI --- */
+        #app-container { flex: 1; position: relative; display: flex; flex-direction: column; }
+
+        /* Toolbar */
+        .toolbar {
+            position: absolute; top: 24px; left: 50%; transform: translateX(-50%);
+            background: var(--surface); backdrop-filter: blur(24px);
+            border: 1px solid var(--border); border-radius: 24px;
+            padding: 8px 12px; display: flex; gap: 6px; align-items: center;
+            z-index: 100; box-shadow: var(--shadow);
+        }
+
+        .tool-group { display: flex; gap: 4px; padding: 0 8px; border-right: 1px solid var(--border); }
+        .tool-group:last-child { border-right: none; }
+
+        .btn-tool {
+            width: 44px; height: 44px; border: none; background: transparent;
+            color: var(--text-muted); cursor: pointer; border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); font-size: 20px;
+        }
+        .btn-tool:hover { background: var(--surface-hover); color: var(--text); }
+        .btn-tool.active { background: var(--primary); color: white; box-shadow: 0 4px 12px var(--primary-glow); }
+
+        /* Color Picker Overlay */
+        .color-dot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: transform 0.2s; }
+        .color-dot.active { border-color: white; transform: scale(1.2); }
+
+        /* Canvas Wrapper */
+        .viewport {
+            flex: 1; background: #0f172a; overflow: hidden;
+            display: flex; align-items: center; justify-content: center; position: relative;
+        }
+
+        #canvas-board {
+            background: white; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            cursor: crosshair;
+        }
+
+        #canvas-workspace {
             position: absolute;
-            inset: -2px;
-            background: radial-gradient(600px 200px at 20% -10%, rgba(124,58,237,.18) 0%, transparent 60%),
-                        radial-gradient(400px 160px at 90% 10%, rgba(6,182,212,.18) 0%, transparent 60%);
-            filter: blur(30px);
-            z-index: 0;
+            top: 50%;
+            left: 50%;
+            transform-origin: center;
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
             pointer-events: none;
         }
 
-        h1 {
-            display: none; /* Hidden since we have menu bar now */
+        #canvas-workspace > * {
+            pointer-events: auto;
         }
 
-        .controls {
-            position: relative;
-            z-index: 1;
-            margin-bottom: 14px;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 10px;
-            align-items: center;
-        }
+        /* Blueprint Mode */
+        .blueprint #canvas-board { background: #0c111d; }
+        .blueprint .viewport { background: #020617; }
 
-        .controls input,
-        .controls button {
-            height: 40px;
-            padding: 0 12px;
-            border-radius: var(--radius-sm);
-            border: 1px solid var(--border);
-            outline: none;
-            background: linear-gradient(180deg, var(--glass-strong), var(--glass));
-            color: var(--text);
-            box-shadow: var(--shadow);
-            transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition), background var(--transition);
+        /* Overlay UI */
+        .side-panel {
+            position: absolute; left: 24px; top: 50%; transform: translateY(-50%);
+            background: var(--surface); backdrop-filter: blur(20px);
+            border: 1px solid var(--border); border-radius: 24px;
+            padding: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 90;
         }
-
-        .controls input::placeholder { color: var(--muted); }
-
-        .controls input:focus {
-            border-color: rgba(124,58,237,.6);
-            box-shadow: 0 0 0 3px rgba(124,58,237,.18);
-        }
-
-        .controls button {
-            cursor: pointer;
-            background: linear-gradient(180deg, rgba(124,58,237,.28), rgba(124,58,237,.16));
-            border: 1px solid rgba(124,58,237,.35);
-        }
-        .controls button:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(124,58,237,.22); }
-        .controls button:active { transform: translateY(0); }
-        .controls button.active {
-            background: linear-gradient(180deg, rgba(34,197,94,.36), rgba(34,197,94,.2));
-            border-color: rgba(34,197,94,.45);
-            color: #ecfdf5;
-            box-shadow: 0 8px 24px rgba(34,197,94,.24), inset 0 1px 0 rgba(255,255,255,.12);
-        }
-
-        .color-picker {
-            width: 40px;
-            height: 40px;
-            padding: 0;
-            border: 1px solid var(--border);
-            border-radius: 50%;
-            overflow: hidden;
-            cursor: pointer;
-            background: var(--glass);
-        }
-
-        /* Range slider */
-        input[type="range"] {
-            -webkit-appearance: none;
-            appearance: none;
-            height: 6px;
-            border-radius: 999px;
-            background: linear-gradient(90deg, rgba(124,58,237,.7), rgba(6,182,212,.7));
-            outline: none;
-        }
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 18px; height: 18px;
-            border-radius: 50%;
-            background: #fff;
-            border: 2px solid rgba(124,58,237,.8);
-            box-shadow: 0 2px 8px rgba(0,0,0,.35);
-            cursor: pointer;
-        }
-        input[type="range"]::-moz-range-thumb {
-            width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 2px solid rgba(124,58,237,.8);
-            box-shadow: 0 2px 8px rgba(0,0,0,.35); cursor: pointer;
-        }
-
-        #whiteboard {
-            display: block;
-            width: 100%;
-            max-width: 1000px;
-            aspect-ratio: 4 / 3;
-            height: auto;
-            max-height: 72vh;
-            border-radius: var(--radius);
-            border: 1px solid var(--border);
-            background: linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,.75));
-            box-shadow: 0 20px 40px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.5);
-            cursor: crosshair;
-            image-rendering: -webkit-optimize-contrast;
-            transition: transform var(--transition), box-shadow var(--transition);
-            position: relative;
-            z-index: 1;
-        }
-        #whiteboard:hover { transform: translateY(-2px); box-shadow: 0 28px 60px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.5); }
 
         .status-bar {
-            margin-top: 14px;
-            font-size: 0.9em;
-            color: var(--muted);
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            align-items: center;
+            position: absolute; bottom: 24px; left: 24px; right: 24px;
+            display: flex; justify-content: space-between; align-items: center; pointer-events: none;
         }
-        .status-bar span {
-            padding: 6px 10px;
-            border-radius: var(--radius-xs);
-            background: linear-gradient(180deg, var(--glass-strong), var(--glass));
-            border: 1px solid var(--border);
-            color: var(--text);
+        .pill {
+            background: var(--surface); border: 1px solid var(--border);
+            padding: 8px 16px; border-radius: 99px; font-size: 13px; font-weight: 500;
+            color: var(--text-muted); backdrop-filter: blur(12px); pointer-events: auto;
+            display: flex; align-items: center; gap: 8px;
         }
-        #webrtcStatus { color: var(--danger); }
+        .pulse { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 12px #22c55e; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
 
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes titleFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        /* Engineering Grid Overlay */
+        #grid-overlay {
+            position: absolute; inset: 0; pointer-events: none; opacity: 0.1;
+            background-size: 40px 40px;
+        }
+        .grid-dots { background-image: radial-gradient(circle, #fff 1px, transparent 1px); }
+        .grid-lines { background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px); }
 
-        /* Subtle stagger for controls */
-        .controls { animation: fadeInUp 420ms ease both; }
-        .controls:nth-of-type(1) { animation-delay: 60ms; }
-        .controls:nth-of-type(2) { animation-delay: 120ms; }
-        .controls:nth-of-type(3) { animation-delay: 180ms; }
-
-        /* Menu Bar */
-        .menu-bar {
-            display: flex;
-            align-items: center;
-            padding: 8px 16px;
-            background: linear-gradient(180deg, var(--glass-strong), var(--glass));
-            border-bottom: 1px solid var(--border);
-            gap: 24px;
-            position: relative;
-            z-index: 10;
-        }
-        .menu-item {
-            background: none;
-            border: none;
-            color: var(--text);
-            cursor: pointer;
-            padding: 6px 12px;
-            border-radius: 4px;
-            font-size: 14px;
-            transition: background var(--transition);
-        }
-        .menu-item:hover { background: var(--glass); }
-        .toolbar {
-            display: flex;
-            align-items: center;
-            padding: 8px 16px;
-            gap: 8px;
-            background: linear-gradient(180deg, var(--glass-strong), var(--glass));
-            border-bottom: 1px solid var(--border);
-            position: relative;
-            z-index: 10;
-        }
-        .toolbar-btn {
-            width: 32px;
-            height: 32px;
-            border: 1px solid var(--border);
-            background: var(--glass);
-            color: var(--text);
-            border-radius: 4px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all var(--transition);
-        }
-        .toolbar-btn:hover { background: var(--glass-strong); transform: translateY(-1px); }
-        .toolbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        /* Ribbon Toolbar */
-        .ribbon {
-            background: linear-gradient(180deg, var(--glass-strong), var(--glass));
-            border-bottom: 1px solid var(--border);
-            padding: 12px 16px;
-            position: relative;
-            z-index: 10;
-        }
-        .ribbon-section {
-            display: inline-flex;
-            flex-direction: column;
-            margin-right: 24px;
-            vertical-align: top;
-        }
-        .ribbon-section-title {
-            font-size: 11px;
-            color: var(--muted);
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .ribbon-buttons {
-            display: flex;
-            gap: 4px;
-            flex-wrap: wrap;
-        }
-        .ribbon-btn {
-            width: 36px;
-            height: 36px;
-            border: 1px solid var(--border);
-            background: var(--glass);
-            color: var(--text);
-            border-radius: 4px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            transition: all var(--transition);
-            position: relative;
-        }
-        .ribbon-btn:hover { background: var(--glass-strong); }
-        .ribbon-btn.active {
-            background: linear-gradient(180deg, rgba(124,58,237,.4), rgba(124,58,237,.2));
-            border-color: rgba(124,58,237,.6);
-        }
-        .ribbon-btn-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 36px);
-            gap: 4px;
-        }
-
-        /* Color Palette */
-        .color-palette {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-        .color-swatch {
-            width: 28px;
-            height: 28px;
-            border-radius: 4px;
-            border: 2px solid var(--border);
-            cursor: pointer;
-            transition: transform var(--transition), box-shadow var(--transition);
-        }
-        .color-swatch:hover { transform: scale(1.1); box-shadow: 0 2px 8px rgba(0,0,0,.3); }
-        .color-swatch.active { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
-
-        /* Left Sidebar */
-        .left-sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 48px;
-            background: linear-gradient(180deg, var(--glass-strong), var(--glass));
-            border-right: 1px solid var(--border);
-            padding: 16px 8px;
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-            z-index: 100;
-        }
-        .vertical-slider {
-            writing-mode: vertical-lr;
-            height: 200px;
-            width: 24px;
-        }
-        .slider-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 8px;
-        }
-        .slider-icon {
-            font-size: 20px;
-            color: var(--muted);
-        }
-
-        /* Canvas Container with Zoom */
-        .canvas-container {
-            position: relative;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            overflow: auto;
-            flex: 1;
-            background: var(--bg-2);
-        }
-        .canvas-wrapper {
-            position: relative;
-            display: inline-block;
-        }
-
-        /* Enhanced Status Bar */
-        .status-bar-enhanced {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 16px;
-            background: linear-gradient(180deg, var(--glass-strong), var(--glass));
-            border-top: 1px solid var(--border);
-            font-size: 12px;
-            gap: 16px;
-        }
-        .status-left, .status-right {
-            display: flex;
-            gap: 16px;
-            align-items: center;
-        }
-        .zoom-control {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .zoom-slider {
-            width: 100px;
-            height: 4px;
-        }
-
-        /* Shape Preview */
-        .shape-preview {
-            position: absolute;
-            pointer-events: none;
-            border: 2px dashed var(--accent);
-        }
-
-        /* Text Input Overlay */
-        .text-input-overlay {
-            position: absolute;
-            border: 2px solid var(--accent);
-            padding: 4px;
-            background: rgba(255,255,255,0.9);
-            color: #000;
-            font-family: Arial, sans-serif;
-            min-width: 100px;
-            min-height: 24px;
-            resize: both;
-            overflow: hidden;
-        }
-
-        /* Hide session controls when not needed */
-        .session-controls {
-            margin-bottom: 12px;
-        }
     </style>
 </head>
-<body>
+<body class="blueprint">
+
+    <!-- Auth System -->
+    <div id="auth-overlay">
+        <div class="auth-card">
+            <div style="font-size: 48px; margin-bottom: 20px;">🎨</div>
+            <h1>CollabCanvas Pro</h1>
+            <p>The elite workspace for technical teams and creative minds.</p>
+
+            <div id="auth-step-1" class="step">
+                <div id="g_id_onload"
+                     data-client_id="222718818435-k0is9elsnfejlblr43p44bt3i3fltk6f.apps.googleusercontent.com"
+                     data-callback="handleAuth"
+                     data-auto_prompt="false">
+                </div>
+                <div class="g_id_signin" data-type="standard" data-theme="filled_black" data-size="large" data-width="340"></div>
+                
+                <div style="margin: 20px 0; font-size: 13px; color: var(--text-muted);">— OR —</div>
+                <button class="btn-primary" style="background: rgba(255,255,255,0.05); border: 1px solid var(--border);" onclick="guestLogin()">Continue as Guest</button>
+            </div>
+
+            <div id="auth-step-2" class="step" style="display: none;">
+                <button class="btn-primary" onclick="createSession()">New Technical Canvas</button>
+                <div style="margin: 16px 0; font-size: 13px; color: var(--text-muted);">OR JOIN SESSION</div>
+                <input type="text" id="join-id" class="input-pro" placeholder="Enter Workspace ID">
+                <button class="btn-primary" style="background: rgba(255,255,255,0.05); border: 1px solid var(--border);" onclick="joinSession()">Join Workspace</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
     <div id="app-container">
-        <!-- Ribbon Toolbar -->
-        <div class="ribbon">
-            <div class="ribbon-section">
-                <div class="ribbon-section-title">Tools</div>
-                <div class="ribbon-buttons">
-                    <button class="ribbon-btn active" id="toolPen" title="Pen">✏️</button>
-                    <button class="ribbon-btn" id="toolEraser" title="Eraser">🧹</button>
-                    <button class="ribbon-btn" id="toolText" title="Text">A</button>
-                    <button class="ribbon-btn" id="toolEyedropper" title="Eyedropper">👁️</button>
-                    <button class="ribbon-btn" id="toolZoom" title="Zoom">🔍</button>
-                </div>
+        <!-- Floating Main Toolbar -->
+        <div class="toolbar">
+            <div class="tool-group">
+                <button class="btn-tool active" onclick="setTool('pen', this)" title="Brush (P)">🖌️</button>
+                <button class="btn-tool" onclick="setTool('highlighter', this)" title="Highlighter (H)">🖍️</button>
+                <button class="btn-tool" onclick="setTool('laser', this)" title="Laser Pointer (L)">🔦</button>
+                <button class="btn-tool" onclick="setTool('eraser', this)" title="Eraser (E)">🧹</button>
             </div>
-            <div class="ribbon-section">
-                <div class="ribbon-section-title">Brushes</div>
-                <div class="ribbon-btn-grid">
-                    <button class="ribbon-btn brush-style" data-style="solid" title="Solid">━</button>
-                    <button class="ribbon-btn brush-style" data-style="dashed" title="Dashed">┉</button>
-                    <button class="ribbon-btn brush-style active" data-style="dotted" title="Dotted">┄</button>
-                    <button class="ribbon-btn brush-style" data-style="wavy" title="Wavy">≈</button>
-                </div>
+            <div class="tool-group">
+                <button class="btn-tool" onclick="setTool('line', this)" title="Line (L)">📏</button>
+                <button class="btn-tool" onclick="setTool('rect', this)" title="Rectangle (R)">▯</button>
+                <button class="btn-tool" onclick="setTool('circle', this)" title="Circle (C)">◯</button>
+                <button class="btn-tool" onclick="setTool('arrow', this)" title="Arrow (A)">↗</button>
             </div>
-            <div class="ribbon-section">
-                <div class="ribbon-section-title">Shapes</div>
-                <div class="ribbon-btn-grid">
-                    <button class="ribbon-btn shape-tool" data-shape="circle" title="Circle">○</button>
-                    <button class="ribbon-btn shape-tool" data-shape="square" title="Square">□</button>
-                    <button class="ribbon-btn shape-tool" data-shape="triangle" title="Triangle">△</button>
-                    <button class="ribbon-btn shape-tool" data-shape="arrow" title="Arrow">→</button>
-                    <button class="ribbon-btn shape-tool" data-shape="speech" title="Speech Bubble">💬</button>
-                    <button class="ribbon-btn shape-tool" data-shape="star" title="Star">★</button>
-                </div>
+            <div class="tool-group">
+                <button class="btn-tool" onclick="setTool('sticky', this)" title="Sticky Note (N)">📝</button>
+                <button class="btn-tool" onclick="setTool('text', this)" title="Text (T)">T</button>
             </div>
-            <div class="ribbon-section">
-                <div class="ribbon-section-title">Colours</div>
-                <div class="color-palette" id="colorPalette">
-                    <div class="color-swatch active" data-color="#000000" style="background: #000000"></div>
-                    <div class="color-swatch" data-color="#ffffff" style="background: #ffffff"></div>
-                    <div class="color-swatch" data-color="#808080" style="background: #808080"></div>
-                    <div class="color-swatch" data-color="#ff0000" style="background: #ff0000"></div>
-                    <div class="color-swatch" data-color="#ff8800" style="background: #ff8800"></div>
-                    <div class="color-swatch" data-color="#ffff00" style="background: #ffff00"></div>
-                    <div class="color-swatch" data-color="#00ff00" style="background: #00ff00"></div>
-                    <div class="color-swatch" data-color="#00ffff" style="background: #00ffff"></div>
-                    <div class="color-swatch" data-color="#0000ff" style="background: #0000ff"></div>
-                    <div class="color-swatch" data-color="#8800ff" style="background: #8800ff"></div>
-                    <div class="color-swatch" data-color="#ffaaaa" style="background: #ffaaaa"></div>
-                    <div class="color-swatch" data-color="#ffcc88" style="background: #ffcc88"></div>
-                    <div class="color-swatch" data-color="#ffffaa" style="background: #ffffaa"></div>
-                    <div class="color-swatch" data-color="#aaffaa" style="background: #aaffaa"></div>
-                    <div class="color-swatch" data-color="#aaffff" style="background: #aaffff"></div>
-                    <div class="color-swatch" data-color="#aaaaff" style="background: #aaaaff"></div>
-                    <input type="color" id="colorPicker" class="color-picker" value="#000000" style="width: 28px; height: 28px; border-radius: 4px;">
-                </div>
+            <div class="tool-group" style="padding-left: 12px; gap: 8px;">
+                <div class="color-dot active" style="background: #6366f1;" onclick="setColor('#6366f1', this)"></div>
+                <div class="color-dot" style="background: #22d3ee;" onclick="setColor('#22d3ee', this)"></div>
+                <div class="color-dot" style="background: #f43f5e;" onclick="setColor('#f43f5e', this)"></div>
+                <div class="color-dot" style="background: #10b981;" onclick="setColor('#10b981', this)"></div>
+                <div class="color-dot" style="background: #ffffff;" onclick="setColor('#ffffff', this)"></div>
             </div>
         </div>
 
-        <!-- Session Controls (Collapsible) -->
-        <div class="session-controls controls">
-            <input type="text" id="username" placeholder="Username" value="user_A">
-            <button id="btnLogin">Login</button>
-            <span id="authStatus">Not logged in.</span>
-            <button id="btnCreate">Create Session</button>
-            <input type="text" id="sessionIdInput" placeholder="Session ID">
-            <button id="btnJoin" disabled>Join Session</button>
-            <button id="btnSave" disabled>Save Canvas</button>
-            <button id="btnClear">Clear</button>
-            <label style="display: flex; align-items: center; gap: 8px;">
-                Size: <input type="range" id="sizeSlider" min="1" max="50" value="5" style="width: 100px;">
-            </label>
-            <label style="display: flex; align-items: center; gap: 8px;">
-                Opacity: <input type="range" id="opacitySlider" min="0" max="100" value="100" style="width: 100px;">
-            </label>
+        <!-- Secondary Side Panel -->
+        <div class="side-panel">
+            <button class="btn-tool" onclick="toggleBlueprint()" title="Toggle Blueprint Mode">🌙</button>
+            <button class="btn-tool" onclick="cycleGrid()" title="Change Grid Type">▦</button>
+            <div style="height: 1px; background: var(--border); margin: 4px 0;"></div>
+            <button class="btn-tool" onclick="undo()" title="Undo (Ctrl+Z)">↩️</button>
+            <button class="btn-tool" onclick="clearBoard()" title="Clear Board">🗑️</button>
+            <button class="btn-tool" onclick="exportImage()" title="Export PNG">💾</button>
         </div>
 
-        <!-- Canvas Container -->
-        <div class="canvas-container">
-            <div class="canvas-wrapper">
-                <canvas id="whiteboard" width="800" height="600"></canvas>
+        <!-- Infinite Viewport -->
+        <div class="viewport" id="viewport">
+            <div id="grid-overlay" class="grid-dots"></div>
+            <div id="canvas-workspace">
+                <canvas id="canvas-board"></canvas>
+                <canvas id="preview-board" style="position: absolute; inset: 0; pointer-events: none;"></canvas>
+                <canvas id="laser-board" style="position: absolute; inset: 0; pointer-events: none; opacity: 0.8;"></canvas>
+                <div id="sticky-container" style="position: absolute; inset: 0; pointer-events: none;"></div>
             </div>
         </div>
 
-        <!-- Enhanced Status Bar -->
-        <div class="status-bar-enhanced">
-            <div class="status-left">
-                <span>🖱️</span>
-                <span id="cursorPosition">X: 0, Y: 0</span>
-                <span>📐</span>
-                <span id="canvasDimensions">800 x 600px</span>
-                <span id="sessionStatus">Session: N/A</span>
+        <!-- Real-time Status -->
+        <div class="status-bar">
+            <div class="pill">
+                <div class="pulse"></div>
+                <span id="conn-text">Connecting...</span>
             </div>
-            <div class="status-right">
-                <span id="webrtcStatus" style="color: red;">Disconnected</span>
-                <span id="currentUserName">User: -</span>
-                <div class="zoom-control">
-                    <button id="zoomOut" class="toolbar-btn">−</button>
-                    <input type="range" id="zoomSlider" class="zoom-slider" min="25" max="200" value="100">
-                    <button id="zoomIn" class="toolbar-btn">+</button>
-                    <span id="zoomPercent">100%</span>
-                </div>
-                <button id="fitToScreen" class="toolbar-btn" title="Fit to Screen">⤢</button>
+            <div class="pill" id="session-pill" style="cursor: pointer;" onclick="copyID()">
+                <span id="session-id-text">No Session</span>
+                <span style="font-size: 10px; opacity: 0.5;">COPY ID</span>
             </div>
         </div>
     </div>
 
     <script>
-        // --- Global State ---
-        const CANVAS_WIDTH = 800;
-        const CANVAS_HEIGHT = 600;
-        const canvas = document.getElementById('whiteboard');
-        const ctx = canvas.getContext('2d');
-        
+        const board = document.getElementById('canvas-board');
+        const ctx = board.getContext('2d');
+        const preview = document.getElementById('preview-board');
+        const pctx = preview.getContext('2d');
+        const laserBoard = document.getElementById('laser-board');
+        const lctx = laserBoard.getContext('2d');
+        const overlay = document.getElementById('auth-overlay');
+
         let isDrawing = false;
-        let lastX = 0;
-        let lastY = 0;
-        let drawingHistory = []; 
-        let currentTool = 'pen';
-        let currentBrushStyle = 'solid';
-        let currentShape = null;
-        let shapeStartX = 0;
-        let shapeStartY = 0;
-        let currentOpacity = 1;
-        
-        // Undo/Redo stacks
-        let undoStack = [];
-        let redoStack = [];
-        
-        // Zoom state
-        let zoomLevel = 1;
-        
-        // Text tool state
-        let textInputElement = null;
-        
-        // Canvas state for undo/redo
-        let historyStates = [];
-        
-        let peerConnection;
-        let dataChannel;
-        let ws; 
-        
-        // App State
-        let currentToken = null;
-        let currentSessionId = null;
-        let currentUserName = '';
+        let tool = 'pen';
+        let color = '#6366f1';
+        let startX, startY;
+        let lastX, lastY;
+        let history = [];
+        let token = null;
+        let sid = null;
+        let laserPoints = [];
 
-        // --- DEPLOYMENT CONFIGURATION ---
-        // IMPORTANT: CHANGE 'localhost:8000' to your deployed server address (e.g., 'https://my-app.com')
-        // index.html <script>
-// The browser will automatically handle the 'https://' and 'wss://'
-        const DEPLOYED_HOST = 'whiteboard-axcw.onrender.com'; 
-// ... the rest of your code ... 
-        const PROTOCOL = DEPLOYED_HOST.startsWith('localhost') ? 'http' : 'https';
-        const WS_PROTOCOL = DEPLOYED_HOST.startsWith('localhost') ? 'ws' : 'wss';
-        const API_BASE = `${PROTOCOL}://${DEPLOYED_HOST}/api`; 
+        let ws, pc, dc;
 
-        // --- UI Element References ---
-        const authStatus = document.getElementById('authStatus');
-        const sessionStatus = document.getElementById('sessionStatus');
-        const webrtcStatus = document.getElementById('webrtcStatus');
-        const currentUserNameEl = document.getElementById('currentUserName');
-        const sessionIdInput = document.getElementById('sessionIdInput');
-        
-        // --- API & Auth Helpers ---
-        function getAuthHeaders() {
-            return {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
-            };
-        }
-
-        async function handleLogin() {
-            const username = document.getElementById('username').value;
-            if (!username) return alert("Please enter a username.");
-
-            try {
-                const response = await fetch(`${API_BASE}/login`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username })
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    currentToken = data.access_token;
-                    currentUserName = data.username;
-                    authStatus.textContent = `Logged in as: ${currentUserName}`;
-                    currentUserNameEl.textContent = currentUserName;
-                    document.getElementById('btnJoin').disabled = false;
-                    document.getElementById('btnCreate').disabled = false;
-                } else {
-                    alert("Login failed.");
-                }
-            } catch (error) {
-                console.error('Login error:', error);
-                alert("Login failed. Check server address/CORS or if the FastAPI server is running.");
-            }
-        }
-
-        async function handleCreateSession() {
-            if (!currentToken) return alert("Please log in first.");
-
-            try {
-                const response = await fetch(`${API_BASE}/sessions`, {
-                    method: 'POST',
-                    headers: getAuthHeaders()
-                });
-
-                if (response.ok) {
-                    const session = await response.json();
-                    currentSessionId = session.session_id;
-                    sessionIdInput.value = currentSessionId;
-                    handleJoinSession(true); // Auto-join and set as initiator
-                } else {
-                    alert("Failed to create session.");
-                }
-            } catch (error) {
-                console.error('Create session error:', error);
-            }
-        }
-        
-        async function handleSaveCanvas() {
-            if (!currentToken || !currentSessionId) {
-                alert("Please join a session first.");
-                return;
-            }
+        function init() {
+            const w = 2400, h = 1600;
+            [board, preview, laserBoard].forEach(c => { c.width = w; c.height = h; });
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+            lctx.lineCap = 'round'; lctx.lineJoin = 'round';
             
-            if (drawingHistory.length === 0) {
-                alert("Nothing to save - canvas is empty.");
-                return;
-            }
+            const workspace = document.getElementById('canvas-workspace');
+            workspace.style.width = w + 'px';
+            workspace.style.height = h + 'px';
             
-            // Disable save button during save operation
-            const saveBtn = document.getElementById('btnSave');
-            saveBtn.disabled = true;
-            sessionStatus.textContent = "Saving canvas...";
-            
-            try {
-                console.log(`Saving ${drawingHistory.length} drawing commands to session ${currentSessionId}`);
-                
-                const response = await fetch(`${API_BASE}/sessions/${currentSessionId}/save`, {
-                    method: 'POST',
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify(drawingHistory) // Send the entire history array
-                });
+            const ratio = Math.min(window.innerWidth / w, window.innerHeight / h) * 0.95;
+            workspace.dataset.scale = ratio;
+            workspace.style.transform = `translate(-50%, -50%) scale(${ratio})`;
+        }
+        init();
+        window.addEventListener('resize', init);
 
-                if (response.status === 204) {
-                    sessionStatus.textContent = `✓ Session ${currentSessionId} saved successfully!`;
-                    console.log("Canvas saved successfully!");
-                } else if (response.status === 404) {
-                    const errorData = await response.json().catch(() => ({ detail: "Session not found" }));
-                    alert(`Session not found: ${errorData.detail || "Please create or join a session first."}`);
-                    sessionStatus.textContent = "Save failed: Session not found.";
-                } else if (response.status === 401) {
-                    alert("Authentication failed. Please log in again.");
-                    sessionStatus.textContent = "Save failed: Authentication error.";
-                } else if (response.status === 422) {
-                    const errorData = await response.json().catch(() => ({ detail: "Validation error" }));
-                    console.error("Validation error:", errorData);
-                    alert(`Failed to save: ${errorData.detail || "Invalid data format."}`);
-                    sessionStatus.textContent = "Save failed: Validation error.";
+        // --- AUTH & SESSIONS ---
+        async function handleAuth(res) {
+            const out = await fetch('/api/auth/google', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ credential: res.credential })
+            });
+            const data = await out.json();
+            token = data.access_token;
+            showSessionStep();
+        }
+
+        function guestLogin() {
+            token = 'GUEST_TOKEN'; // Minimal bypass for UI demo/guest use
+            showSessionStep();
+        }
+
+        function showSessionStep() {
+            document.getElementById('auth-step-1').style.display = 'none';
+            document.getElementById('auth-step-2').style.display = 'block';
+        }
+
+        async function createSession() {
+            const res = await fetch('/api/sessions', { headers: {'Authorization': `Bearer ${token}`}, method: 'POST' });
+            const data = await res.json();
+            launch(data.session_id);
+        }
+
+        async function joinSession() {
+            const id = document.getElementById('join-id').value.toUpperCase();
+            if(!id) return;
+            try {
+                const res = await fetch(`/api/sessions/${id}`, { headers: {'Authorization': `Bearer ${token}`} });
+                if(res.ok) {
+                    const data = await res.json();
+                    renderHistory(data.canvas_state);
+                    launch(data.session_id);
                 } else {
-                    const errorText = await response.text().catch(() => "Unknown error");
-                    console.error("Save failed with status:", response.status, errorText);
-                    alert(`Failed to save canvas state. Status: ${response.status}`);
-                    sessionStatus.textContent = `Save failed (Status: ${response.status}).`;
-                }
-            } catch (error) {
-                console.error('Save error:', error);
-                alert(`Failed to save canvas: ${error.message || "Network error. Check console for details."}`);
-                sessionStatus.textContent = "Save failed: Network error.";
-            } finally {
-                saveBtn.disabled = false;
-            }
-        }
-
-        function clearCanvas() {
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-            drawingHistory = []; // Clear local history
-            sessionStatus.textContent = `Canvas cleared locally. (Must save to persist!)`;
-        }
-
-        // --- Canvas Drawing Logic ---
-        function drawLine(x1, y1, x2, y2, color, size, tool) {
-            drawLineEnhanced(x1, y1, x2, y2, color, size, tool);
-        }
-
-        function handleRemoteDrawing(event) {
-            try {
-                const cmd = JSON.parse(event.data);
-                if (cmd.x1 !== undefined) {
-                    drawLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.size, cmd.tool);
-                    drawingHistory.push(cmd); // Add remote command to history
+                    alert("Workspace not found or access denied.");
                 }
             } catch (e) {
-                console.error("Failed to parse remote drawing data:", e);
+                alert("Connection failed. Is the server running?");
             }
         }
 
-        function setupCanvasDrawing() {
-            // Verify canvas and context are available
-            if (!canvas || !ctx) {
-                console.error('Canvas or context not available!');
+        function launch(id) {
+            sid = id;
+            overlay.classList.add('hidden');
+            document.getElementById('session-id-text').textContent = `WORKSPACE: ${id}`;
+            setupRTC(id);
+        }
+
+        // --- RTC ---
+        function setupRTC(id) {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${proto}://${location.host}/ws/${id}`);
+            pc = new RTCPeerConnection({ iceServers: [{urls: 'stun:stun.l.google.com:19302'}] });
+
+            ws.onmessage = async (e) => {
+                const m = JSON.parse(e.data);
+                if(m.type === 'offer') {
+                    await pc.setRemoteDescription(new RTCSessionDescription(m));
+                    const a = await pc.createAnswer();
+                    await pc.setLocalDescription(a);
+                    ws.send(JSON.stringify(pc.localDescription));
+                } else if(m.type === 'answer') { await pc.setRemoteDescription(new RTCSessionDescription(m)); }
+                else if(m.type === 'candidate') { await pc.addIceCandidate(new RTCIceCandidate(m.candidate)); }
+                else if(m.type === 'request_offer') { createOffer(); }
+            };
+
+            pc.onicecandidate = (e) => { if(e.candidate) ws.send(JSON.stringify({type:'candidate', candidate: e.candidate})); };
+            dc = pc.createDataChannel('draw');
+            bindDC(dc);
+            pc.ondatachannel = (e) => bindDC(e.channel);
+            ws.onopen = () => ws.send(JSON.stringify({type:'request_offer'}));
+        }
+
+        function createOffer() { pc.createOffer().then(o => { pc.setLocalDescription(o); ws.send(JSON.stringify(o)); }); }
+
+        function bindDC(c) {
+            dc = c;
+            c.onopen = () => {
+                document.getElementById('conn-text').textContent = 'Live Workspace Connected';
+                document.getElementById('conn-text').style.color = '#22c55e';
+            };
+            c.onmessage = (e) => { const cmd = JSON.parse(e.data); exec(cmd); history.push(cmd); };
+        }
+
+        // --- DRAWING ENGINE ---
+        function getPos(e) {
+            const r = board.getBoundingClientRect();
+            const workspace = document.getElementById('canvas-workspace');
+            const s = parseFloat(workspace.dataset.scale);
+            return {
+                x: (e.clientX - r.left) / s,
+                y: (e.clientY - r.top) / s
+            };
+        }
+
+        board.addEventListener('mousedown', e => {
+            isDrawing = true;
+            const {x,y} = getPos(e);
+            startX = x; startY = y;
+            lastX = x; lastY = y;
+        });
+
+        board.addEventListener('mousemove', e => {
+            const {x,y} = getPos(e);
+            
+            if (tool === 'laser') {
+                laserPoints.push({x, y, time: Date.now()});
+                broadcast({t:'laser', x, y});
                 return;
             }
 
-            // Helper function to get accurate canvas coordinates
-            function getCanvasCoordinates(e) {
-                const rect = canvas.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) {
-                    console.warn('Canvas has zero dimensions');
-                    return { x: 0, y: 0 };
-                }
-                const scaleX = canvas.width / rect.width;
-                const scaleY = canvas.height / rect.height;
-                return {
-                    x: (e.clientX - rect.left) * scaleX,
-                    y: (e.clientY - rect.top) * scaleY
+            if(!isDrawing) return;
+            
+            if(['pen', 'eraser', 'highlighter'].includes(tool)) {
+                const cmd = {
+                    t: 'path', x1: lastX, y1: lastY, x2: x, y2: y,
+                    c: tool === 'eraser' ? (document.body.classList.contains('blueprint') ? '#0c111d' : '#ffffff') : color,
+                    w: tool === 'eraser' ? 40 : (tool === 'highlighter' ? 30 : 4),
+                    o: tool === 'highlighter' ? 0.3 : 1
                 };
+                exec(cmd);
+                broadcast(cmd);
+                lastX = x; lastY = y;
+            } else if (tool !== 'sticky') {
+                pctx.clearRect(0, 0, board.width, board.height);
+                drawShape(pctx, startX, startY, x, y, tool, color);
             }
+        });
 
-            canvas.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                const coords = getCanvasCoordinates(e);
-                
-                if (currentTool === 'text') {
-                    addText(coords.x, coords.y);
-                    return;
-                }
-                
-                if (currentTool === 'eyedropper') {
-                    const color = getColorAt(Math.round(coords.x), Math.round(coords.y));
-                    document.getElementById('colorPicker').value = color;
-                    document.querySelectorAll('.color-swatch').forEach(s => {
-                        if (s.dataset.color.toLowerCase() === color.toLowerCase()) s.classList.add('active');
-                        else s.classList.remove('active');
-                    });
-                    setTool('pen'); // Switch back to pen after picking color
-                    return;
-                }
-                
-                if (currentTool === 'zoom') {
-                    const delta = e.shiftKey ? -10 : 10;
-                    setZoom(Math.max(25, Math.min(200, zoomLevel * 100 + delta)));
-                    return;
-                }
-                
-                if (currentTool === 'shape' && currentShape) {
-                    isDrawing = true;
-                    shapeStartX = coords.x;
-                    shapeStartY = coords.y;
-                    return;
-                }
-                
-                isDrawing = true;
-                [lastX, lastY] = [coords.x, coords.y];
-                saveState(); // Save state before drawing
-            });
-
-            canvas.addEventListener('mousemove', (e) => {
-                const coords = getCanvasCoordinates(e);
-                updateCursorPosition(e);
-                
-                if (!isDrawing) return;
-                
-                const color = document.getElementById('colorPicker')?.value || '#000000';
-                const size = Number.parseInt(document.getElementById('sizeSlider')?.value || '5', 10);
-
-                // Handle shape drawing
-                if (currentTool === 'shape' && currentShape) {
-                    // Redraw canvas without current shape for preview
-                    // In a real implementation, you'd use a temp canvas for preview
-                    return;
-                }
-                
-                // For the eraser, use a white stroke color or the canvas background color
-                const strokeColor = (currentTool === 'eraser') ? 'white' : color;
-                
-                // Draw locally using enhanced draw function
-                drawLineEnhanced(lastX, lastY, coords.x, coords.y, strokeColor, size, currentTool);
-                
-                const command = {
-                    x1: lastX, y1: lastY, 
-                    x2: coords.x, y2: coords.y, 
-                    color: strokeColor, 
-                    size: size,
-                    tool: currentTool
-                };
-
-                // Add to history and send via WebRTC Data Channel (only if session is active)
-                drawingHistory.push(command); 
-                if (dataChannel && dataChannel.readyState === 'open') {
-                    dataChannel.send(JSON.stringify(command));
-                }
-
-                [lastX, lastY] = [coords.x, coords.y];
-            });
-
-            canvas.addEventListener('mouseup', (e) => {
-                if (!isDrawing) return;
-                
-                const coords = getCanvasCoordinates(e);
-                const color = document.getElementById('colorPicker')?.value || '#000000';
-                const size = Number.parseInt(document.getElementById('sizeSlider')?.value || '5', 10);
-                
-                // Handle shape drawing completion
-                if (currentTool === 'shape' && currentShape) {
-                    drawShape(currentShape, shapeStartX, shapeStartY, coords.x, coords.y, color, size);
-                    saveState();
-                    drawingHistory.push({
-                        type: 'shape',
-                        shape: currentShape,
-                        x1: shapeStartX, y1: shapeStartY,
-                        x2: coords.x, y2: coords.y,
-                        color: color,
-                        size: size
-                    });
-                }
-                
-                isDrawing = false;
-            });
-            
-            canvas.addEventListener('mouseout', () => {
-                if (isDrawing) {
-                    isDrawing = false;
-                }
-                updateCursorPosition({ clientX: -1, clientY: -1 });
-            });
-            
-            // Touch support for mobile devices
-            canvas.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                const touch = e.touches[0];
-                const coords = getCanvasCoordinates(touch);
-                isDrawing = true;
-                [lastX, lastY] = [coords.x, coords.y];
-            });
-
-            canvas.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                if (!isDrawing) return;
-                
-                const touch = e.touches[0];
-                const coords = getCanvasCoordinates(touch);
-                const currentX = coords.x;
-                const currentY = coords.y;
-                
-                const color = document.getElementById('colorPicker').value;
-                const size = Number.parseInt(document.getElementById('sizeSlider').value, 10);
-                const strokeColor = (currentTool === 'eraser') ? 'white' : color;
-                
-                drawLine(lastX, lastY, currentX, currentY, strokeColor, size, currentTool);
-                
-                const command = {
-                    x1: lastX, y1: lastY,
-                    x2: currentX, y2: currentY,
-                    color: strokeColor,
-                    size: size,
-                    tool: currentTool
-                };
-
-                drawingHistory.push(command);
-                if (dataChannel && dataChannel.readyState === 'open') {
-                    dataChannel.send(JSON.stringify(command));
-                }
-
-                lastX = currentX;
-                lastY = currentY;
-            });
-
-            canvas.addEventListener('touchend', () => isDrawing = false);
-            canvas.addEventListener('touchcancel', () => isDrawing = false);
-        }
-
-        function loadCanvasState(commands) {
-            // Clear and reset state before loading
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-            drawingHistory = []; 
-            
-            commands.forEach(cmd => {
-                drawLine(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.size, cmd.tool);
-                drawingHistory.push(cmd);
-            });
-            console.log(`Loaded ${commands.length} drawing commands.`);
-        }
-
-        // --- WebRTC Signaling and Peer Connection ---
-        
-        async function handleJoinSession(isInitiator = false) {
-            currentSessionId = sessionIdInput.value.trim();
-            if (!currentSessionId) return alert("Please enter a Session ID.");
-            if (!currentToken) return alert("Please log in first.");
-
-            sessionStatus.textContent = `Joining session: ${currentSessionId}...`;
-            document.getElementById('btnSave').disabled = true;
-
-            // 1. Load Initial Canvas State from API
-            try {
-                const response = await fetch(`${API_BASE}/sessions/${currentSessionId}`, { headers: getAuthHeaders() });
-                if (!response.ok) throw new Error("Session load failed.");
-                const sessionData = await response.json();
-                loadCanvasState(sessionData.canvas_state); // Restore drawing
-            } catch (error) {
-                console.error("Error loading session:", error);
-                sessionStatus.textContent = `Session ${currentSessionId} load failed. Check ID and server logs.`;
-                return;
+        board.addEventListener('mouseup', e => {
+            if(!isDrawing) return;
+            isDrawing = false;
+            const {x,y} = getPos(e);
+            if(tool === 'sticky') {
+                createSticky(x, y);
+                broadcast({t:'sticky', x, y});
+            } else if(!['pen', 'eraser', 'highlighter', 'laser'].includes(tool)) {
+                pctx.clearRect(0, 0, board.width, board.height);
+                const cmd = { t: 'shape', s: tool, x1: startX, y1: startY, x2: x, y2: y, c: color, w: 4 };
+                exec(cmd);
+                broadcast(cmd);
             }
-            
-            // 2. Setup WebSocket for Signaling
-            ws = new WebSocket(`${WS_PROTOCOL}://${DEPLOYED_HOST}/ws/${currentSessionId}`);
-            
-            ws.onopen = () => {
-                console.log("WebSocket connected. Starting WebRTC signaling...");
-                setupPeerConnection(isInitiator);
-            };
-            
-            // WebSocket Message Handler (Signaling Exchange)
-            ws.onmessage = async (event) => {
-                const signal = JSON.parse(event.data);
+        });
 
-                if (signal.type === 'offer') {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
-                    const answer = await peerConnection.createAnswer();
-                    await peerConnection.setLocalDescription(answer);
-                    ws.send(JSON.stringify(peerConnection.localDescription)); // Send Answer back
-                } else if (signal.type === 'answer') {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
-                } else if (signal.type === 'candidate') {
-                    try {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
-                    } catch (e) {
-                        console.error('Error adding received ICE candidate:', e);
-                    }
+        // Laser trail loop
+        function updateLaser() {
+            lctx.clearRect(0, 0, laserBoard.width, laserBoard.height);
+            const now = Date.now();
+            laserPoints = laserPoints.filter(p => now - p.time < 1000);
+            
+            if (laserPoints.length > 1) {
+                lctx.beginPath();
+                lctx.strokeStyle = '#f43f5e';
+                lctx.lineWidth = 4;
+                lctx.moveTo(laserPoints[0].x, laserPoints[0].y);
+                for (let i = 1; i < laserPoints.length; i++) {
+                    const p = laserPoints[i];
+                    lctx.globalAlpha = 1 - (now - p.time) / 1000;
+                    lctx.lineTo(p.x, p.y);
                 }
-            };
-            
-            ws.onclose = () => console.log("WebSocket closed.");
-            ws.onerror = (err) => console.error("WebSocket error:", err);
-            
-            sessionStatus.textContent = `Connected to session ${currentSessionId}. WebRTC connecting...`;
-            document.getElementById('btnSave').disabled = false;
-        }
-
-        function setupPeerConnection(isInitiator) {
-            peerConnection = new RTCPeerConnection({
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-            });
-
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
-                }
-            };
-            
-            peerConnection.onconnectionstatechange = () => {
-                webrtcStatus.textContent = peerConnection.connectionState;
-                webrtcStatus.style.color = (peerConnection.connectionState === 'connected') ? 'green' : 'red';
-            };
-            
-            if (isInitiator) {
-                // Initiator creates the data channel
-                dataChannel = peerConnection.createDataChannel('whiteboard-channel');
-                dataChannel.onopen = (e) => console.log('Data Channel Open (Initiator)!');
-                dataChannel.onmessage = handleRemoteDrawing;
-                
-                peerConnection.createOffer().then(offer => {
-                    peerConnection.setLocalDescription(offer);
-                    ws.send(JSON.stringify(offer)); // Send Offer
-                });
-            } else {
-                // Receiver listens for the data channel
-                peerConnection.ondatachannel = (event) => {
-                    dataChannel = event.channel;
-                    dataChannel.onopen = (e) => console.log('Data Channel Open (Receiver)!');
-                    dataChannel.onmessage = handleRemoteDrawing;
-                };
+                lctx.stroke();
             }
+            requestAnimationFrame(updateLaser);
         }
-        
-        // --- Advanced Drawing Features ---
+        updateLaser();
 
-        // Undo/Redo functionality
-        function saveState() {
-            const imageData = ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-            undoStack.push(imageData);
-            redoStack = []; // Clear redo stack when new action is performed
-            if (undoStack.length > 50) undoStack.shift(); // Limit history
-        }
-
-        function undo() {
-            if (undoStack.length === 0) return;
-            const currentState = ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-            redoStack.push(currentState);
-            const previousState = undoStack.pop();
-            ctx.putImageData(previousState, 0, 0);
+        function createSticky(x, y, text = "New Note") {
+            const s = document.createElement('div');
+            s.style.cssText = `position:absolute; left:${x}px; top:${y}px; width:150px; min-height:150px; background:#fef08a; color:#854d0e; padding:10px; border-radius:8px; pointer-events:auto; box-shadow:0 10px 20px rgba(0,0,0,0.2); font-size:14px; transform:translate(-50%, -50%) rotate(-2deg);`;
+            s.contentEditable = true;
+            s.innerText = text;
+            document.getElementById('sticky-container').appendChild(s);
         }
 
-        function redo() {
-            if (redoStack.length === 0) return;
-            const currentState = ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-            undoStack.push(currentState);
-            const nextState = redoStack.pop();
-            ctx.putImageData(nextState, 0, 0);
-        }
-
-        // Shape drawing functions
-        function drawShape(shape, x1, y1, x2, y2, color, size) {
-            ctx.save();
-            ctx.globalAlpha = currentOpacity;
-            ctx.strokeStyle = color;
-            ctx.fillStyle = color;
-            ctx.lineWidth = size;
-            ctx.beginPath();
-
-            const width = Math.abs(x2 - x1);
-            const height = Math.abs(y2 - y1);
-            const centerX = (x1 + x2) / 2;
-            const centerY = (y1 + y2) / 2;
-
-            switch(shape) {
-                case 'circle':
-                    ctx.arc(centerX, centerY, Math.max(width, height) / 2, 0, 2 * Math.PI);
-                    break;
-                case 'square':
-                    ctx.rect(Math.min(x1, x2), Math.min(y1, y2), width, height);
-                    break;
-                case 'triangle':
-                    ctx.moveTo(centerX, Math.min(y1, y2));
-                    ctx.lineTo(Math.min(x1, x2), Math.max(y1, y2));
-                    ctx.lineTo(Math.max(x1, x2), Math.max(y1, y2));
-                    ctx.closePath();
-                    break;
-                case 'arrow': {
-                    const dx = x2 - x1;
-                    const dy = y2 - y1;
-                    const angle = Math.atan2(dy, dx);
-                    ctx.moveTo(x1, y1);
-                    ctx.lineTo(x2, y2);
-                    ctx.lineTo(x2 - 15 * Math.cos(angle - Math.PI / 6), y2 - 15 * Math.sin(angle - Math.PI / 6));
-                    ctx.moveTo(x2, y2);
-                    ctx.lineTo(x2 - 15 * Math.cos(angle + Math.PI / 6), y2 - 15 * Math.sin(angle + Math.PI / 6));
-                    break;
-                }
-                case 'speech': {
-                    const r = Math.min(width, height) / 4;
-                    ctx.arc(centerX, centerY, r, 0, 2 * Math.PI);
-                    ctx.moveTo(centerX + r * 0.7, centerY + r * 0.7);
-                    ctx.lineTo(centerX + r, centerY + r * 1.5);
-                    ctx.lineTo(centerX + r * 1.3, centerY + r * 0.7);
-                    break;
-                }
-                case 'star': {
-                    const outerRadius = Math.max(width, height) / 2;
-                    const innerRadius = outerRadius / 2;
-                    for (let i = 0; i < 5; i++) {
-                        const angle = (i * 4 * Math.PI / 5) - Math.PI / 2;
-                        const x = centerX + outerRadius * Math.cos(angle);
-                        const y = centerY + outerRadius * Math.sin(angle);
-                        if (i === 0) ctx.moveTo(x, y);
-                        else ctx.lineTo(x, y);
-                        const innerAngle = angle + (2 * Math.PI / 5);
-                        ctx.lineTo(centerX + innerRadius * Math.cos(innerAngle), centerY + innerRadius * Math.sin(innerAngle));
-                    }
-                    ctx.closePath();
-                    break;
-                }
-            }
-            ctx.stroke();
-            ctx.restore();
-        }
-
-        // Brush style implementation
-        function applyBrushStyle() {
-            switch(currentBrushStyle) {
-                case 'dashed':
-                    ctx.setLineDash([5, 5]);
-                    break;
-                case 'dotted':
-                    ctx.setLineDash([2, 8]);
-                    break;
-                case 'wavy':
-                    ctx.setLineDash([3, 3, 1, 3]);
-                    break;
-                default:
-                    ctx.setLineDash([]);
+        function exec(cmd) {
+            if(cmd.t === 'path') {
+                ctx.globalAlpha = cmd.o || 1;
+                ctx.beginPath(); ctx.strokeStyle = cmd.c; ctx.lineWidth = cmd.w;
+                ctx.moveTo(cmd.x1, cmd.y1); ctx.lineTo(cmd.x2, cmd.y2); ctx.stroke();
+                ctx.globalAlpha = 1;
+            } else if(cmd.t === 'shape') {
+                drawShape(ctx, cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.s, cmd.c, cmd.w);
             }
         }
 
-        // Enhanced drawLine with brush styles
-        function drawLineEnhanced(x1, y1, x2, y2, color, size, tool) {
-            if (!ctx) return;
-            ctx.save();
-            ctx.beginPath();
-            ctx.globalCompositeOperation = (tool === 'eraser') ? 'destination-out' : 'source-over';
-            ctx.globalAlpha = currentOpacity;
-            ctx.strokeStyle = color;
-            ctx.lineWidth = size;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            applyBrushStyle();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
-            ctx.restore();
+        function broadcast(cmd) {
+            history.push(cmd);
+            if(dc && dc.readyState === 'open') dc.send(JSON.stringify(cmd));
         }
 
-        // Text tool
-        function addText(x, y) {
-            if (textInputElement) textInputElement.remove();
-            
-            const rect = canvas.getBoundingClientRect();
-            const input = document.createElement('textarea');
-            input.className = 'text-input-overlay';
-            input.style.left = (rect.left + x) + 'px';
-            input.style.top = (rect.top + y) + 'px';
-            input.style.fontSize = '16px';
-            input.style.border = '2px solid var(--accent)';
-            input.placeholder = 'Type text...';
-            
-            input.addEventListener('blur', () => {
-                const text = input.value;
-                if (text) {
-                    ctx.save();
-                    ctx.font = '16px Arial';
-                    ctx.fillStyle = document.getElementById('colorPicker').value;
-                    ctx.globalAlpha = currentOpacity;
-                    ctx.fillText(text, x, y);
-                    ctx.restore();
-                    saveState();
-                }
-                input.remove();
-                textInputElement = null;
-            });
-            
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    input.blur();
-                }
-            });
-            
-            document.body.appendChild(input);
-            input.focus();
-            textInputElement = input;
+        function drawShape(t, x1, y1, x2, y2, s, c, w) {
+            t.beginPath(); t.strokeStyle = c; t.lineWidth = w;
+            if(s === 'line') { t.moveTo(x1, y1); t.lineTo(x2, y2); }
+            else if(s === 'rect') { t.rect(x1, y1, x2-x1, y2-y1); }
+            else if(s === 'circle') { const r = Math.hypot(x2-x1, y2-y1); t.arc(x1, y1, r, 0, 7); }
+            else if(s === 'arrow') {
+                const l = 20, a = Math.atan2(y2-y1, x2-x1);
+                t.moveTo(x1, y1); t.lineTo(x2, y2);
+                t.lineTo(x2 - l*Math.cos(a-0.5), y2 - l*Math.sin(a-0.5));
+                t.moveTo(x2, y2); t.lineTo(x2 - l*Math.cos(a+0.5), y2 - l*Math.sin(a+0.5));
+            }
+            t.stroke();
         }
 
-        // Eyedropper tool
-        function getColorAt(x, y) {
-            const imageData = ctx.getImageData(x, y, 1, 1);
-            const [r, g, b] = imageData.data;
-            return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+        // --- UI ACTIONS ---
+        function setTool(t, el) {
+            tool = t;
+            document.querySelectorAll('.btn-tool').forEach(b => b.classList.remove('active'));
+            el.classList.add('active');
         }
 
-        // Zoom functionality
-        function setZoom(level) {
-            zoomLevel = level / 100;
-            const wrapper = document.querySelector('.canvas-wrapper');
-            wrapper.style.transform = `scale(${zoomLevel})`;
-            wrapper.style.transformOrigin = 'center';
-            document.getElementById('zoomPercent').textContent = Math.round(level) + '%';
-            document.getElementById('zoomSlider').value = level;
+        function setColor(c, el) {
+            color = c;
+            document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'));
+            el.classList.add('active');
         }
 
-        // Update cursor position in status bar
-        function updateCursorPosition(e) {
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
-            const x = Math.round((e.clientX - rect.left) * scaleX);
-            const y = Math.round((e.clientY - rect.top) * scaleY);
-            document.getElementById('cursorPosition').textContent = `X: ${x}, Y: ${y}`;
+        function toggleBlueprint() { document.body.classList.toggle('blueprint'); }
+
+        let grid = 'dots';
+        function cycleGrid() {
+            const g = document.getElementById('grid-overlay');
+            if(grid === 'dots') { g.className = 'grid-lines'; grid = 'lines'; }
+            else if(grid === 'lines') { g.className = ''; grid = 'none'; }
+            else { g.className = 'grid-dots'; grid = 'dots'; }
         }
 
-        // --- Initialization and Event Listeners ---
-        document.getElementById('btnLogin').addEventListener('click', handleLogin);
-        document.getElementById('btnCreate').addEventListener('click', handleCreateSession);
-        document.getElementById('btnJoin').addEventListener('click', () => handleJoinSession(false)); 
-        document.getElementById('btnSave').addEventListener('click', handleSaveCanvas);
-        document.getElementById('btnClear').addEventListener('click', clearCanvas);
-
-        // Tool Switching Logic
-        function setTool(toolName) {
-            currentTool = toolName;
-            currentShape = null;
-            
-            // Update ribbon buttons
-            document.querySelectorAll('.ribbon-btn').forEach(btn => btn.classList.remove('active'));
-            
-            if (toolName === 'pen') document.getElementById('toolPen')?.classList.add('active');
-            else if (toolName === 'eraser') document.getElementById('toolEraser')?.classList.add('active');
-            else if (toolName === 'text') document.getElementById('toolText')?.classList.add('active');
-            else if (toolName === 'eyedropper') document.getElementById('toolEyedropper')?.classList.add('active');
-            else if (toolName === 'zoom') document.getElementById('toolZoom')?.classList.add('active');
-            
-            // Update cursor
-            if (toolName === 'eyedropper') canvas.style.cursor = 'crosshair';
-            else if (toolName === 'zoom') canvas.style.cursor = 'zoom-in';
-            else if (toolName === 'text') canvas.style.cursor = 'text';
-            else canvas.style.cursor = 'crosshair';
-            
-            console.log(`Tool switched to: ${toolName}`);
-        }
-
-        // Ribbon tool buttons
-        document.getElementById('toolPen')?.addEventListener('click', () => setTool('pen'));
-        document.getElementById('toolEraser')?.addEventListener('click', () => setTool('eraser'));
-        document.getElementById('toolText')?.addEventListener('click', () => setTool('text'));
-        document.getElementById('toolEyedropper')?.addEventListener('click', () => setTool('eyedropper'));
-        document.getElementById('toolZoom')?.addEventListener('click', () => setTool('zoom'));
-
-        // Brush style buttons
-        document.querySelectorAll('.brush-style').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.brush-style').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                currentBrushStyle = btn.dataset.style;
-            });
-        });
-
-        // Shape tool buttons
-        document.querySelectorAll('.shape-tool').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.shape-tool').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                currentShape = btn.dataset.shape;
-                currentTool = 'shape';
-            });
-        });
-
-        // Color palette
-        document.querySelectorAll('.color-swatch').forEach(swatch => {
-            swatch.addEventListener('click', () => {
-                document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
-                swatch.classList.add('active');
-                const color = swatch.dataset.color;
-                document.getElementById('colorPicker').value = color;
-            });
-        });
-
-        document.getElementById('colorPicker').addEventListener('change', (e) => {
-            const color = e.target.value;
-            document.querySelectorAll('.color-swatch').forEach(s => {
-                if (s.dataset.color === color) s.classList.add('active');
-                else s.classList.remove('active');
-            });
-        });
-
-        // Size and Opacity sliders
-        document.getElementById('opacitySlider')?.addEventListener('input', (e) => {
-            currentOpacity = e.target.value / 100;
-        });
-
-        // Zoom controls
-        document.getElementById('zoomSlider')?.addEventListener('input', (e) => {
-            setZoom(Number.parseInt(e.target.value, 10));
-        });
-        document.getElementById('zoomIn')?.addEventListener('click', () => {
-            setZoom(Math.min(200, zoomLevel * 100 + 10));
-        });
-        document.getElementById('zoomOut')?.addEventListener('click', () => {
-            setZoom(Math.max(25, zoomLevel * 100 - 10));
-        });
-        document.getElementById('fitToScreen')?.addEventListener('click', () => {
-            setZoom(100);
-        });
-
-        // Legacy tool buttons (for compatibility)
-        const btnPen = document.getElementById('btnPen');
-        const btnEraser = document.getElementById('btnEraser');
-        if (btnPen) btnPen.addEventListener('click', () => setTool('pen'));
-        if (btnEraser) btnEraser.addEventListener('click', () => setTool('eraser'));
+        function clearBoard() { ctx.clearRect(0, 0, board.width, board.height); history = []; }
         
-        // Update canvas dimensions display
-        document.getElementById('canvasDimensions').textContent = `${CANVAS_WIDTH} x ${CANVAS_HEIGHT}px`;
-        
-        // Initialize canvas interaction after DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', setupCanvasDrawing);
-        } else {
-            setupCanvasDrawing();
+        async function exportImage() {
+            const link = document.createElement('a');
+            link.download = `collab-export-${Date.now()}.png`;
+            link.href = board.toDataURL();
+            link.click();
         }
-        
-        // Initialize zoom
-        setZoom(100);
-        
-        console.log('Canvas initialized:', canvas, 'Context:', ctx);
+
+        function renderHistory(cmds) { cmds.forEach(exec); history = cmds; }
+        function copyID() { navigator.clipboard.writeText(sid); alert('Workspace ID Copied!'); }
+
     </script>
 </body>
 </html>

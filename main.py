@@ -4,33 +4,26 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from pymongo import MongoClient
 from bson import ObjectId
-from pydantic import BaseModel, Field # Removed field_validator, model_validator as they are not used
+from pydantic import BaseModel, Field, BeforeValidator
+from typing_extensions import Annotated
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os
+from google.oauth2 import id_token
+from google.auth.transport import requests
 
-# --- NEW IMPORTS FOR PYDANTIC V2 FIX ---
-from pydantic import BeforeValidator 
-from typing_extensions import Annotated 
-# ---------------------------------------
-
-# --- 0. CONFIGURATION AND INITIALIZATION ---
-
-# SECURITY: Use environment variables in a production deployment
+# --- 0. CONFIGURATION ---
 SECRET_KEY = os.getenv("SECRET_KEY", "e3528e24b8de982dd911041b3c16c21d789176926a0496f22e6ba1d1ed77ed30")
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("DB_NAME", "whiteboard_app_db")
+GOOGLE_CLIENT_ID = "222718818435-k0is9elsnfejlblr43p44bt3i3fltk6f.apps.googleusercontent.com"
 
-# MONGODB ATLAS URI: Use environment variable if available, otherwise use default
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://fastapi_user:ZemQrtyHyyS6hMiL@whiteboardcluster.wajjxyr.mongodb.net/?appName=WhiteboardCluster") 
-DB_NAME = os.getenv("DB_NAME", "whiteboard_app_db") 
-db_client: Optional[MongoClient] = None
+app = FastAPI(title="Professional Whiteboard API")
 
-app = FastAPI(title="Whiteboard Collaboration App")
-
-# CORS: Allows any origin to access the API (essential for development and deployment)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,218 +32,126 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Health check endpoint for Render
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for monitoring."""
-    return {"status": "healthy", "service": "whiteboard-app"}
-
-# Serve static files (for index.html)
-@app.get("/")
-async def read_root():
-    """Serve the main HTML file."""
-    if os.path.exists("index.html"):
-        return FileResponse("index.html")
-    else:
-        raise HTTPException(status_code=500, detail="index.html not found")
-
-# --- 1. MONGODB CONNECTION AND MODELS ---
-
-# --- PYDANTIC V2 FIX: Custom type for ObjectId handling ---
+# --- 1. MODELS & DATABASE ---
 def validate_objectid(v):
-    """
-    Validator function to ensure the value is a valid ObjectId structure (or already an ObjectId).
-    """
-    if isinstance(v, ObjectId):
-        return str(v)
-    if not ObjectId.is_valid(v):
-        raise ValueError('Invalid ObjectId format')
+    if isinstance(v, ObjectId): return str(v)
+    if not ObjectId.is_valid(v): raise ValueError('Invalid ObjectId')
     return str(v)
 
-# Define the PyObjectId custom type using the validator
 PyObjectId = Annotated[str, BeforeValidator(validate_objectid)]
-# ---------------------------------------
 
 class DrawingCommand(BaseModel):
-    """Data model for a single collaborative drawing action."""
     x1: float
     y1: float
     x2: float
     y2: float
     color: str
     size: int
-    tool: str = Field(default='pen') # Supports 'pen', 'eraser'
+    tool: str = 'pen'
 
 class WhiteboardModel(BaseModel):
-    """Schema for storing a Whiteboard session in MongoDB."""
-    # This now uses the PyObjectId defined above
-    id: Optional[PyObjectId] = Field(alias="_id", default=None) 
-    session_id: str = Field(...)
-    creator_username: str = Field(...)
-    canvas_state: List[DrawingCommand] = Field(default_factory=list)
-
+    id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    session_id: str
+    creator_username: str
+    canvas_state: List[DrawingCommand] = []
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True
-        # Ensure MongoDB ObjectId is converted to string for JSON output
-        json_encoders = {ObjectId: str}
+
+class GoogleAuthRequest(BaseModel):
+    credential: str
+
+class ProfileUpdateIn(BaseModel):
+    job_title: str
+    bio: Optional[str] = ""
 
 @app.on_event("startup")
-def startup_db_client():
-    """Connects to MongoDB."""
-    global db_client
-    try:
-        db_client = MongoClient(MONGO_URI)
-        # The database is created on first use, so we just reference it here
-        app.database = db_client[DB_NAME] 
-        print("Connected to the MongoDB database!")
-    except Exception as e:
-        print(f"Failed to connect to MongoDB: {e}")
-        # Optionally exit or handle failure
+def startup():
+    app.db_client = MongoClient(MONGO_URI)
+    app.database = app.db_client[DB_NAME]
 
 @app.on_event("shutdown")
-def shutdown_db_client():
-    """Closes the MongoDB connection."""
-    if db_client:
-        db_client.close()
-        print("Closed MongoDB connection.")
+def shutdown():
+    app.db_client.close()
 
-# --- 2. JWT AUTHENTICATION LOGIC ---
-
-class UserIn(BaseModel):
-    username: str
-
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
+# --- 2. AUTHENTICATION ---
+def create_access_token(data: dict):
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=30)
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
     to_encode.update({"exp": expire, "sub": data["username"]})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
-    """Dependency function to validate JWT."""
+    if token == "GUEST_TOKEN":
+        return "guest_user"
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
-        return username
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
+        return payload.get("sub")
+    except:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-@app.post("/api/login")
-async def login_for_access_token(user_in: UserIn):
-    """Generates a JWT token for a given username."""
-    access_token_expires = timedelta(minutes=30)
-    access_token = create_access_token(
-        data={"username": user_in.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer", "username": user_in.username}
+@app.post("/api/auth/google")
+async def google_auth(auth_req: GoogleAuthRequest):
+    try:
+        idinfo = id_token.verify_oauth2_token(auth_req.credential, requests.Request(), GOOGLE_CLIENT_ID)
+        email = idinfo['email']
+        username = idinfo.get('name', email.split('@')[0])
+        app.database["users"].update_one({"email": email}, {"$set": {"email": email, "username": username}}, upsert=True)
+        token = create_access_token({"username": username, "email": email})
+        return {"access_token": token, "token_type": "bearer", "username": username}
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
 
+@app.post("/api/users/profile")
+async def update_profile(profile: ProfileUpdateIn, user: str = Depends(get_current_user)):
+    app.database["users"].update_one({"username": user}, {"$set": {"job_title": profile.job_title, "bio": profile.bio}})
+    return {"status": "success"}
 
-# --- 3. WHITEBOARD REST API ---
-
+# --- 3. SESSION API ---
 @app.post("/api/sessions", response_model=WhiteboardModel)
-async def create_session(current_user: str = Depends(get_current_user)):
-    """Creates a new whiteboard session."""
-    session_id = str(uuid.uuid4()).split('-')[0].upper()
-    
-    new_board = WhiteboardModel(
-        session_id=session_id,
-        creator_username=current_user,
-        canvas_state=[]
-    )
-    
-    # Use model_dump(by_alias=True) for MongoDB compatibility
-    board_data = new_board.model_dump(by_alias=True, exclude_none=True)
-    result = app.database["whiteboards"].insert_one(board_data)
-    
-    # Retrieve the new document to get the MongoDB generated _id
-    created_board = app.database["whiteboards"].find_one({"_id": result.inserted_id})
-    
-    # This now uses the fixed Pydantic validation:
-    return WhiteboardModel.model_validate(created_board)
+async def create_session(user: str = Depends(get_current_user)):
+    sid = str(uuid.uuid4()).split('-')[0].upper()
+    board = WhiteboardModel(session_id=sid, creator_username=user)
+    res = app.database["whiteboards"].insert_one(board.model_dump(by_alias=True, exclude_none=True))
+    return WhiteboardModel.model_validate(app.database["whiteboards"].find_one({"_id": res.inserted_id}))
 
 @app.get("/api/sessions/{session_id}", response_model=WhiteboardModel)
-async def get_session(session_id: str, current_user: str = Depends(get_current_user)):
-    """Retrieves an existing whiteboard session state from MongoDB."""
-    board_doc = app.database["whiteboards"].find_one({"session_id": session_id})
-    
-    if board_doc is None:
-        raise HTTPException(status_code=404, detail="Whiteboard session not found")
-    
-    return WhiteboardModel.model_validate(board_doc)
+async def get_session(session_id: str, user: str = Depends(get_current_user)):
+    board = app.database["whiteboards"].find_one({"session_id": session_id})
+    if not board: raise HTTPException(status_code=404)
+    return WhiteboardModel.model_validate(board)
 
-@app.post("/api/sessions/{session_id}/save", status_code=status.HTTP_204_NO_CONTENT)
-async def save_canvas_state(
-    session_id: str,
-    state_data: List[DrawingCommand],
-    current_user: str = Depends(get_current_user)
-):
-    """Saves the current list of drawing commands to MongoDB."""
-    try:
-        print(f"Saving canvas state for session {session_id} by user {current_user}")
-        print(f"Received {len(state_data)} drawing commands")
-        
-        # Convert Pydantic models to dictionaries for MongoDB
-        canvas_state_dicts = [cmd.model_dump() for cmd in state_data]
-        
-        # Update the session in MongoDB
-        update_result = app.database["whiteboards"].update_one(
-            {"session_id": session_id},
-            {"$set": {"canvas_state": canvas_state_dicts}}
-        )
+@app.post("/api/sessions/{session_id}/save")
+async def save_state(session_id: str, state: List[DrawingCommand], user: str = Depends(get_current_user)):
+    app.database["whiteboards"].update_one({"session_id": session_id}, {"$set": {"canvas_state": [c.model_dump() for c in state]}})
+    return {"status": "ok"}
 
-        if update_result.modified_count == 0 and update_result.matched_count == 0:
-            print(f"Session {session_id} not found in database")
-            raise HTTPException(status_code=404, detail="Whiteboard session not found")
-        
-        print(f"Successfully saved canvas state for session {session_id}")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error saving canvas state: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+# --- 4. WEBSOCKETS ---
+class Manager:
+    def __init__(self): self.cons: Dict[str, List[WebSocket]] = {}
+    async def connect(self, sid, ws):
+        await ws.accept()
+        if sid not in self.cons: self.cons[sid] = []
+        self.cons[sid].append(ws)
+    def disconnect(self, sid, ws): self.cons[sid].remove(ws)
+    async def broadcast(self, sid, msg, sender):
+        for c in self.cons.get(sid, []):
+            if c != sender: await c.send_text(msg)
 
-
-# --- 4. WEBSOCKET SIGNALING SERVER (ConnectionManager remains unchanged) ---
-
-class ConnectionManager:
-    """Manages active WebSocket connections for WebRTC signaling."""
-    def __init__(self):
-        self.active_connections: Dict[str, List[WebSocket]] = {}
-
-    async def connect(self, session_id: str, websocket: WebSocket):
-        await websocket.accept()
-        if session_id not in self.active_connections:
-            self.active_connections[session_id] = []
-        self.active_connections[session_id].append(websocket)
-
-    def disconnect(self, session_id: str, websocket: WebSocket):
-        if session_id in self.active_connections:
-            self.active_connections[session_id].remove(websocket)
-
-    async def broadcast_signal(self, session_id: str, message: str, sender: WebSocket):
-        for connection in self.active_connections.get(session_id, []):
-            if connection != sender:
-                await connection.send_text(message)
-
-manager = ConnectionManager()
+manager = Manager()
 
 @app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    await manager.connect(session_id, websocket)
-    print(f"User connected to session: {session_id}")
-
+async def websocket_endpoint(ws: WebSocket, session_id: str):
+    await manager.connect(session_id, ws)
     try:
         while True:
-            data = await websocket.receive_text()
-            await manager.broadcast_signal(session_id, data, sender=websocket)
-
+            data = await ws.receive_text()
+            await manager.broadcast(session_id, data, sender=ws)
     except WebSocketDisconnect:
-        manager.disconnect(session_id, websocket)
-        print(f"User disconnected from session: {session_id}")
+        manager.disconnect(session_id, ws)
+
+@app.get("/")
+async def index(): return FileResponse("index.html")
+
+@app.get("/health")
+async def health(): return {"status": "ok"}
