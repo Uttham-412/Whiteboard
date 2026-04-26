@@ -55,15 +55,20 @@ Users can create and join shared whiteboard sessions, draw in real-time with col
     | `DB_NAME` | Database name (defaults to `whiteboard_app_db`). |
 
 3.  **Run the application:**
-    Use the provided startup script or run `uvicorn` directly:
+    Use the provided startup script or run `uvicorn` directly. If the `uvicorn` command is not found in your terminal, use the `python -m` prefix:
 
     ```bash
-    # Using the start.sh script
-    ./start.sh
-    # or using uvicorn directly
-    uvicorn main:app --host 0.0.0.0 --port 8000
+    # Standard run (with hot-reload for development)
+    uvicorn main:app --reload --host 127.0.0.1 --port 8000
+
+    # Fallback if uvicorn is not in PATH
+    python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
     ```
     The application will be accessible at `http://localhost:8000/`.
+
+### 👥 Using the App
+- **Guest Access**: You can click "Continue as Guest" to quickly enter the workspace without logging in.
+- **Collaboration**: Create a session, copy the **Workspace ID** from the bottom bar, and share it with others to draw together in real-time.
 
 ## ☁️ Deployment (Render)
 
