@@ -47,3 +47,7 @@ Thumbs.db
 # Node modules (if you add any frontend dependencies)
 node_modules/
 
+# Vite / React build output
+dist/
+dist-ssr/
+*.local

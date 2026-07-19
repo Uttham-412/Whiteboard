@@ -1,85 +1,117 @@
-# 🎨 Real-Time Collaborative Whiteboard App with FastAPI and WebRTC
+# CollabCanvas Pro ✦
 
-This is a real-time, collaborative whiteboard application built with Python's FastAPI framework for the API and WebSocket signaling, and pure HTML/JavaScript on the frontend utilizing WebRTC for peer-to-peer data transfer.
+> A production-grade collaborative whiteboard platform built with React 19, TypeScript, FastAPI, Firebase, and WebRTC.
 
-Users can create and join shared whiteboard sessions, draw in real-time with collaborators, and persist the canvas state to a MongoDB database.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.11x-009688?logo=fastapi)
+![Firebase](https://img.shields.io/badge/Firebase-11-FFCA28?logo=firebase)
 
-## ✨ Key Features
+---
 
-* **Real-time Collaboration (WebRTC):** Uses WebSockets for WebRTC signaling to establish peer-to-peer data channels for low-latency, real-time drawing synchronization between users.
-* **Drawing Persistence:** Save and load the entire canvas history (a list of structured `DrawingCommand` objects) to and from MongoDB via a dedicated API endpoint.
-* **Authentication:** JWT-based login mechanism to secure session creation and access.
-* **Advanced Drawing Tools:**
-    * **Tools:** Pen, Eraser, Text, Eyedropper, and Zoom.
-    * **Styles:** Supports Solid, Dashed, Dotted, and Wavy brush styles.
-    * **Shapes:** Includes dedicated tools for Circle, Square, Triangle, Arrow, Speech Bubble, and Star.
+## ✨ Features
 
-## 🛠️ Tech Stack
+| Area | Capabilities |
+|------|-------------|
+| **Canvas** | Freehand pen, shapes (rect/ellipse/diamond/star/triangle), lines, arrows, text, sticky notes, images, frames |
+| **Interactions** | Multi-select, resize handles, rotation, drag-to-pan, pinch-to-zoom, snap-to-grid, smart guides |
+| **Formatting** | Color picker, fill/stroke, opacity, shadow presets, border radius, stroke style (dashed/dotted/solid) |
+| **Collaboration** | Real-time cursor presence via WebRTC data channels, signaling via FastAPI WebSocket |
+| **Auth** | Firebase Google Sign-In **or** local mock mode (zero-config, uses localStorage) |
+| **Board Mgmt** | Create/rename/star/delete boards, folder organization, version history snapshots |
+| **Export** | PNG, SVG, PDF (wired via canvas API) |
+| **AI-Ready** | Placeholder AI service module (`src/services/ai.ts`) ready to integrate Gemini / GPT |
+| **Dark UI** | Glassmorphism panels, animated transitions, responsive layout, Framer Motion |
 
-### Backend (Python/FastAPI)
+---
 
-* **Python:** 3.11.5 (specified in `render.yaml`)
-* **Web Framework:** `fastapi==0.120.4`
-* **ASGI Server:** `uvicorn==0.38.0`
-* **Database Driver:** `pymongo==4.15.3` (for MongoDB Atlas)
-* **Authentication:** `PyJWT==2.10.1`
-* **Real-time:** `websockets==12.0`
+## Architecture
 
-### Frontend (Browser)
+```
+Browser (SPA)  React 19 + TypeScript + Vite
+  Auth Page | Dashboard | Canvas Editor
+  Zustand (authStore / canvasStore)
+  Firebase SDK  |  Mock LocalStorage
+       |
+       | WebSocket
+       |
+FastAPI Signaling Server
+  main.py - WebSocket /ws/{room_id}/{user_id}
+  In-memory room registry + MongoDB (optional)
+```
 
-* **HTML5 Canvas API**
-* **WebRTC Data Channels**
-* **Vanilla JavaScript**
+---
 
-## 🚀 Local Installation and Run
+## Quick Start
 
 ### Prerequisites
 
-1.  Python 3.9+
-2.  A MongoDB Atlas connection string (`MONGO_URI`).
+| Tool | Version |
+|------|---------|
+| Node.js | >= 18 |
+| Python | >= 3.10 |
 
-### Steps
+### 1. Clone and install
 
-1.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+```bash
+git clone https://github.com/Uttham-412/Whiteboard.git
+cd Whiteboard
+npm install
+pip install -r requirements.txt
+```
 
-2.  **Set Environment Variables:**
-    The application requires the following variables to connect to MongoDB and secure JWTs.
+### 2. Configure Firebase (optional)
 
-    | Variable | Description |
-    | :--- | :--- |
-    | `SECRET_KEY` | JWT signing secret (e.g., generated with `secrets.token_hex(32)`). |
-    | `MONGO_URI` | Your MongoDB Atlas connection string. |
-    | `DB_NAME` | Database name (defaults to `whiteboard_app_db`). |
+```bash
+cp .env.example .env.local
+# Edit .env.local with your Firebase project credentials
+```
 
-3.  **Run the application:**
-    Use the provided startup script or run `uvicorn` directly:
+Skip this step to run in **Guest Mode** — all data stored in localStorage.
 
-    ```bash
-    # Using the start.sh script
-    ./start.sh
-    # or using uvicorn directly
-    uvicorn main:app --host 0.0.0.0 --port 8000
-    ```
-    The application will be accessible at `http://localhost:8000/`.
+### 3. Run development servers
 
-## ☁️ Deployment (Render)
+```bash
+# Terminal 1 — React SPA
+npm run dev
 
-The project includes configuration files (`render.yaml` and `start.sh`) for straightforward deployment on a cloud platform like Render.
+# Terminal 2 — FastAPI signaling server
+uvicorn main:app --reload --port 8000
+```
 
-### Render Configuration Summary
+Open http://localhost:5173
 
-* **Environment:** Python 3
-* **Build Command:** `pip install -r requirements.txt`
-* **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+### 4. Production build
 
-### Critical Post-Deployment Step
+```bash
+npm run build
+uvicorn main:app --port 8000
+```
 
-The frontend JavaScript needs to know the deployed URL for WebSocket signaling. After deploying, you **must** update the `DEPLOYED_HOST` constant in `index.html` (around line 77) to your live service URL:
+---
 
-```javascript
-// index.html <script>
-const DEPLOYED_HOST = 'your-app-name.onrender.com'; // <-- UPDATE THIS
-// ... the rest of your code ...
+## Firebase Setup
+
+1. Go to Firebase Console, create a project
+2. Add a Web App, copy the config
+3. Enable Authentication -> Google Sign-In
+4. Enable Firestore Database
+5. Copy credentials into `.env.local`
+
+---
+
+## Tech Stack
+
+- **Frontend**: React 19, TypeScript 5.8, Vite 8, Tailwind CSS v4
+- **State**: Zustand 5
+- **Animation**: Framer Motion 12
+- **Backend**: FastAPI, WebSockets
+- **Auth/DB**: Firebase 11 or localStorage mock
+- **Icons**: Lucide React
+
+---
+
+## License
+
+MIT (c) 2025 Uttham
