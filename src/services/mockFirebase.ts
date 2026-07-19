@@ -35,6 +35,7 @@ export interface MockBoard {
   updatedAt: number;
   lastEditedBy: string;
   templateType?: string;
+  backgroundColor?: string;
 }
 
 export interface MockFolder {
@@ -161,7 +162,8 @@ const getInitialBoards = (userId: string): MockBoard[] => [
     folderId: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    lastEditedBy: 'System'
+    lastEditedBy: 'System',
+    backgroundColor: '#ffffff'
   }
 ];
 
@@ -335,7 +337,8 @@ export const mockStorage = {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       lastEditedBy: mockStorage.getCurrentUser()?.displayName || 'Unknown',
-      templateType
+      templateType,
+      backgroundColor: '#ffffff'
     };
 
     boards.push(newBoard);
