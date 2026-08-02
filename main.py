@@ -22,7 +22,10 @@ from google.auth.transport import requests
 # --- 0. ENVIRONMENT & CONFIGURATION ---
 BASE_DIR = Path(__file__).resolve().parent
 env_path = BASE_DIR / ".env"
-load_dotenv(env_path, override=True)
+if env_path.exists():
+    load_dotenv(env_path, override=True)
+else:
+    load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "e3528e24b8de982dd911041b3c16c21d789176926a0496f22e6ba1d1ed77ed30")
 ALGORITHM = "HS256"
