@@ -30,8 +30,6 @@ else:
 SECRET_KEY = os.getenv("SECRET_KEY", "e3528e24b8de982dd911041b3c16c21d789176926a0496f22e6ba1d1ed77ed30")
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = os.getenv("DB_NAME", "whiteboard_app_db")
 GOOGLE_CLIENT_ID = "222718818435-k0is9elsnfejlblr43p44bt3i3fltk6f.apps.googleusercontent.com"
 
 app = FastAPI(title="Professional Whiteboard API")
@@ -44,14 +42,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 1. MODELS & DATABASE ---
-def validate_objectid(v):
-    if isinstance(v, ObjectId): return str(v)
-    if not ObjectId.is_valid(v): raise ValueError('Invalid ObjectId')
-    return str(v)
-
-PyObjectId = Annotated[str, BeforeValidator(validate_objectid)]
-
+# --- 1. MODELS ---
 class DrawingCommand(BaseModel):
     x1: float
     y1: float
@@ -62,13 +53,10 @@ class DrawingCommand(BaseModel):
     tool: str = 'pen'
 
 class WhiteboardModel(BaseModel):
-    id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    id: Optional[str] = None
     session_id: str
     creator_username: str
     canvas_state: List[DrawingCommand] = []
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
 
 class GoogleAuthRequest(BaseModel):
     credential: str
@@ -77,26 +65,9 @@ class ProfileUpdateIn(BaseModel):
     job_title: str
     bio: Optional[str] = ""
 
-@app.on_event("startup")
-def startup():
-    try:
-        app.db_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
-        # Test connection
-        app.db_client.server_info()
-        app.database = app.db_client[DB_NAME]
-        app.mongo_enabled = True
-        print("Connected to MongoDB Atlas / Local Database.")
-    except Exception as e:
-        print(f"MongoDB not available: {e}. Running in local in-memory fallback state.")
-        app.mongo_enabled = False
-
-@app.on_event("shutdown")
-def shutdown():
-    try:
-        app.db_client.close()
-    except Exception:
-        pass
-
+# --- IN-MEMORY SESSION & USERS STORE ---
+sessions_store: Dict[str, WhiteboardModel] = {}
+users_store: Dict[str, dict] = {}
 
 # --- 2. AUTHENTICATION ---
 def create_access_token(data: dict):
@@ -120,8 +91,7 @@ async def google_auth(auth_req: GoogleAuthRequest):
         idinfo = id_token.verify_oauth2_token(auth_req.credential, requests.Request(), GOOGLE_CLIENT_ID)
         email = idinfo['email']
         username = idinfo.get('name', email.split('@')[0])
-        if getattr(app, "mongo_enabled", False):
-            app.database["users"].update_one({"email": email}, {"$set": {"email": email, "username": username}}, upsert=True)
+        users_store[email] = {"email": email, "username": username}
         token = create_access_token({"username": username, "email": email})
         return {"access_token": token, "token_type": "bearer", "username": username}
     except Exception as e:
@@ -129,43 +99,29 @@ async def google_auth(auth_req: GoogleAuthRequest):
 
 @app.post("/api/users/profile")
 async def update_profile(profile: ProfileUpdateIn, user: str = Depends(get_current_user)):
-    if getattr(app, "mongo_enabled", False):
-        app.database["users"].update_one({"username": user}, {"$set": {"job_title": profile.job_title, "bio": profile.bio}})
+    users_store[user] = {"username": user, "job_title": profile.job_title, "bio": profile.bio}
     return {"status": "success"}
 
 # --- 3. SESSION API ---
 @app.post("/api/sessions", response_model=WhiteboardModel)
 async def create_session(user: str = Depends(get_current_user)):
     sid = str(uuid.uuid4()).split('-')[0].upper()
-    board = WhiteboardModel(session_id=sid, creator_username=user)
-    if getattr(app, "mongo_enabled", False):
-        res = app.database["whiteboards"].insert_one(board.model_dump(by_alias=True, exclude_none=True))
-        return WhiteboardModel.model_validate(app.database["whiteboards"].find_one({"_id": res.inserted_id}))
-    else:
-        if not hasattr(app, "in_memory_boards"):
-            app.in_memory_boards = {}
-        app.in_memory_boards[sid] = board
-        return board
+    board = WhiteboardModel(id=f"board-{sid}", session_id=sid, creator_username=user)
+    sessions_store[sid] = board
+    return board
 
 @app.get("/api/sessions/{session_id}", response_model=WhiteboardModel)
 async def get_session(session_id: str, user: str = Depends(get_current_user)):
-    if getattr(app, "mongo_enabled", False):
-        board = app.database["whiteboards"].find_one({"session_id": session_id})
-        if not board: raise HTTPException(status_code=404)
-        return WhiteboardModel.model_validate(board)
-    else:
-        boards = getattr(app, "in_memory_boards", {})
-        if session_id not in boards: raise HTTPException(status_code=404)
-        return boards[session_id]
+    if session_id not in sessions_store:
+        # Create on demand if new
+        sessions_store[session_id] = WhiteboardModel(id=f"board-{session_id}", session_id=session_id, creator_username=user)
+    return sessions_store[session_id]
 
 @app.post("/api/sessions/{session_id}/save")
 async def save_state(session_id: str, state: List[DrawingCommand], user: str = Depends(get_current_user)):
-    if getattr(app, "mongo_enabled", False):
-        app.database["whiteboards"].update_one({"session_id": session_id}, {"$set": {"canvas_state": [c.model_dump() for c in state]}})
-    else:
-        boards = getattr(app, "in_memory_boards", {})
-        if session_id in boards:
-            boards[session_id].canvas_state = state
+    if session_id not in sessions_store:
+        sessions_store[session_id] = WhiteboardModel(id=f"board-{session_id}", session_id=session_id, creator_username=user)
+    sessions_store[session_id].canvas_state = state
     return {"status": "ok"}
 
 
