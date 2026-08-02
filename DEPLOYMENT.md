@@ -19,30 +19,27 @@ Add these in Render Dashboard → Environment:
    - Generate: `python -c "import secrets; print(secrets.token_hex(32))"`
    - Or Render will auto-generate if using `render.yaml`
 
-2. **MONGO_URI** (Required):
-   - Your MongoDB Atlas connection string
-   - Example: `mongodb+srv://user:password@cluster.mongodb.net/?appName=App`
+2. **RESEND_API_KEY** (Required for invitations):
+   - Your Resend API key for email delivery
 
-3. **DB_NAME** (Optional, defaults to `whiteboard_app_db`):
-   - Database name
+3. **FROM_EMAIL** (Optional, defaults to onboarding@resend.dev):
+   - Sender email address
 
 ### 3. Important Notes
 
-- The app will automatically serve `index.html` at the root URL `/`
-- Make sure `index.html` has the correct `DEPLOYED_HOST` set to your Render URL
-- The Render URL will be something like: `your-app-name.onrender.com`
-- Update `index.html` line 77: `const DEPLOYED_HOST = 'your-app-name.onrender.com';`
+- Firebase Firestore is used for all persistence (Boards, Invitations, Users, Collaborators)
+- The app will automatically serve frontend static files
+- Render supports WebSockets for real-time whiteboard updates
 
 ### 4. Verifying Deployment
 
 1. Visit your Render URL: `https://your-app-name.onrender.com`
 2. Check logs in Render Dashboard for any errors
-3. Test login → create session → draw → save
+3. Test login → create session → draw → invite
 
 ### 5. Troubleshooting
 
-- **502 Bad Gateway**: Check if MongoDB connection is working
+- **502 Bad Gateway**: Check backend startup logs
 - **Cannot connect**: Verify environment variables are set correctly
-- **Static files not loading**: Ensure `index.html` is in the root directory
-- **WebSocket errors**: Render supports WebSockets, but check firewall settings
+- **WebSocket errors**: Render supports WebSockets out-of-the-box
 

@@ -38,7 +38,7 @@ Browser (SPA)  React 19 + TypeScript + Vite
        |
 FastAPI Signaling Server
   main.py - WebSocket /ws/{room_id}/{user_id}
-  In-memory room registry + MongoDB (optional)
+  In-memory room registry + Firebase Firestore
 ```
 
 ---

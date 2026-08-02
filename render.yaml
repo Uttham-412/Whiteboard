@@ -9,8 +9,8 @@ services:
         value: 3.11.5
       - key: SECRET_KEY
         generateValue: true
-      - key: MONGO_URI
+      - key: RESEND_API_KEY
         sync: false
-      - key: DB_NAME
-        value: whiteboard_app_db
+      - key: FROM_EMAIL
+        sync: false
 
