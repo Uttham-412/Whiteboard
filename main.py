@@ -34,7 +34,7 @@ app = FastAPI(title="Professional Whiteboard API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -162,6 +162,7 @@ class InviteRequest(BaseModel):
     role: str = "editor"
     boardName: Optional[str] = "CollabCanvas Workspace"
     ownerName: Optional[str] = "Workspace Admin"
+    appUrl: Optional[str] = None
 
 class VerifyInviteRequest(BaseModel):
     token: str
@@ -183,7 +184,8 @@ async def create_invite(req: InviteRequest):
             "used": False
         }
 
-        app_url = os.getenv("APP_URL", "http://localhost:5173")
+        app_url = req.appUrl or os.getenv("APP_URL", "https://collabcanvas-pro.vercel.app")
+        app_url = app_url.rstrip("/")
         full_invite_url = f"{app_url}/invite?token={token}"
 
         html_content = f"""<!DOCTYPE html>

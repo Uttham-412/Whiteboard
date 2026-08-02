@@ -6,6 +6,7 @@ import { useToast } from '../ui/Toast';
 import { CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { ConstellationLogo } from '../ui/ConstellationLogo';
 import { AiAtmosphere } from '../ui/AiAtmosphere';
+import { getApiUrl } from '../../config/api';
 
 export const InviteAcceptPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -40,7 +41,7 @@ export const InviteAcceptPage: React.FC = () => {
     // Step 2: Authenticated User -> Verify token, attach collaborator, and open board directly
     const verifyAndJoin = async () => {
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const apiUrl = getApiUrl();
         const res = await fetch(`${apiUrl}/api/verify-invite`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

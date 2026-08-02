@@ -92,7 +92,7 @@ export const ProductPreviewHero: React.FC = () => {
           {/* Sticky Note Pin */}
           <div className="absolute right-24 bottom-20 w-48 p-4 bg-[#FEF9C3] rounded-xl border border-amber-300 shadow-md rotate-2">
             <span className="text-[11px] font-bold text-amber-900 block mb-1">📌 Q3 Architecture Review</span>
-            <span className="text-[10px] text-amber-800 leading-snug">Ensure WebSockets connection uses VITE_API_URL backend server port 8000.</span>
+            <span className="text-[10px] text-amber-800 leading-snug">Ensure WebSockets connection uses VITE_API_URL backend server.</span>
           </div>
 
           {/* Realtime Cursor Badge 1: Alex */}

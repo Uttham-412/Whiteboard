@@ -7,7 +7,8 @@ console.log('[Vite Config Debug] process.cwd():', process.cwd());
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
-  console.log('[Vite Config Debug] Loaded Env Keys:', Object.keys(env));
+  const targetApi = env.VITE_API_URL || 'https://whiteboard-backend-10ji.onrender.com';
+  const targetWs = targetApi.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
 
   return {
     plugins: [react(), tailwindcss()],
@@ -17,11 +18,11 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         '/api': {
-          target: 'http://localhost:8000',
+          target: targetApi,
           changeOrigin: true,
         },
         '/ws': {
-          target: 'ws://localhost:8000',
+          target: targetWs,
           ws: true,
         }
       }

@@ -1,3 +1,5 @@
+import { getWsUrl } from '../config/api';
+
 export interface CursorPosition {
   userId: string;
   userName: string;
@@ -24,6 +26,10 @@ export class WebRTCManager {
   private userName: string;
   private userPhoto?: string;
   private userColor: string;
+  private isIntentionallyClosed: boolean = false;
+  private reconnectAttempts: number = 0;
+  private maxReconnectAttempts: number = 10;
+  private reconnectTimer: any = null;
 
   public onCursorUpdate: (cursor: CursorPosition) => void = () => {};
   public onDrawCommand: (cmd: any) => void = () => {};
@@ -40,11 +46,9 @@ export class WebRTCManager {
   }
 
   public connect() {
-    // Read API URL strictly from environment (or default to FastAPI backend http://localhost:8000)
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-    const wsProtocol = apiUrl.startsWith('https') ? 'wss' : 'ws';
-    const hostPath = apiUrl.replace(/^https?:\/\//, '');
-    const wsUrl = `${wsProtocol}://${hostPath}/ws/${this.boardId}`;
+    this.isIntentionallyClosed = false;
+    const baseUrl = getWsUrl();
+    const wsUrl = `${baseUrl}/ws/${this.boardId}`;
     
     console.log(`[Realtime WebSockets] Connecting to backend signaling server: ${wsUrl}`);
     this.ws = new WebSocket(wsUrl);
@@ -58,6 +62,7 @@ export class WebRTCManager {
 
     this.ws.onopen = () => {
       console.log(`[Realtime WebSockets] Connected to ${wsUrl}. Announcing presence...`);
+      this.reconnectAttempts = 0;
       this.onConnectionStateChange('connected');
       this.sendSignalingMessage({
         type: 'join',
@@ -102,6 +107,19 @@ export class WebRTCManager {
     this.ws.onerror = (e) => {
       console.warn(`[Realtime WebSockets] Connection error at ${wsUrl}:`, e);
       this.onConnectionStateChange('error');
+    };
+
+    this.ws.onclose = () => {
+      console.log(`[Realtime WebSockets] Connection closed.`);
+      this.onConnectionStateChange('disconnected');
+      if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++;
+        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000);
+        console.log(`[Realtime WebSockets] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+        this.reconnectTimer = setTimeout(() => {
+          this.connect();
+        }, delay);
+      }
     };
 
     this.pc.onicecandidate = (event) => {
@@ -216,6 +234,11 @@ export class WebRTCManager {
   }
 
   public disconnect() {
+    this.isIntentionallyClosed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.sendSignalingMessage({ type: 'leave', userId: this.userId });
     if (this.ws) {
       this.ws.close();

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Share2, Copy, Check, Mail, Link as LinkIcon, CheckCircle2, Shield } from 'lucide-react';
 import { useCanvasStore } from '../../store/canvasStore';
 import { useToast } from '../ui/Toast';
+import { getApiUrl } from '../../config/api';
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -29,14 +30,16 @@ export const ShareModal: React.FC<ShareModalProps> = ({ isOpen, onClose }) => {
 
     setIsInviting(true);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = getApiUrl();
       const res = await fetch(`${apiUrl}/api/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           boardId: boardId || 'demo-board',
           email: inviteEmail.trim(),
-          role: selectedRole
+          role: selectedRole,
+          boardName: boardTitle || 'CollabCanvas Workspace',
+          appUrl: window.location.origin
         })
       });
 
