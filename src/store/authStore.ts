@@ -1,18 +1,29 @@
 import { create } from 'zustand';
-import { IS_FIREBASE_CONFIGURED, auth, db } from '../services/firebase';
-import { mockStorage, MockUser } from '../services/mockFirebase';
+import { auth, db, firebaseInitError } from '../services/firebase';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signInWithPopup, 
   GoogleAuthProvider, 
   signOut,
-  updateProfile as fbUpdateProfile
+  sendPasswordResetEmail,
+  updateProfile as fbUpdateProfile,
+  onAuthStateChanged,
+  User as FirebaseUser
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  jobTitle?: string;
+  bio?: string;
+}
+
 interface AuthState {
-  user: MockUser | null;
+  user: UserProfile | null;
   loading: boolean;
   error: string | null;
   rememberMe: boolean;
@@ -21,7 +32,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, displayName: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
-  loginAsGuest: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   updateProfile: (displayName: string, jobTitle: string, bio: string, photoURL?: string) => Promise<void>;
   setRememberMe: (val: boolean) => void;
@@ -36,64 +47,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   initAuth: async () => {
     set({ loading: true });
-    try {
-      if (IS_FIREBASE_CONFIGURED && auth) {
-        // Wait for Firebase to check local session
-        auth.onAuthStateChanged(async (fbUser: import('firebase/auth').User | null) => {
-          if (fbUser) {
-            // Get extra fields from Firestore
-            let jobTitle = 'Product Architect';
-            let bio = 'Welcome to CollabCanvas!';
-            try {
-              const uDoc = await getDoc(doc(db, 'users', fbUser.uid));
-              if (uDoc.exists()) {
-                const data = uDoc.data();
-                jobTitle = data.jobTitle || jobTitle;
-                bio = data.bio || bio;
-              }
-            } catch (e) {
-              console.warn("Could not load user extra profile fields", e);
-            }
-            
-            set({
-              user: {
-                uid: fbUser.uid,
-                email: fbUser.email || '',
-                displayName: fbUser.displayName || 'Developer',
-                photoURL: fbUser.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${fbUser.uid}`,
-                jobTitle,
-                bio
-              },
-              loading: false
-            });
-          } else {
-            set({ user: null, loading: false });
-          }
-        });
-      } else {
-        // Mock fallback check
-        const mockUser = mockStorage.getCurrentUser();
-        set({ user: mockUser, loading: false });
-      }
-    } catch (err: any) {
-      set({ error: err.message, loading: false });
+    if (firebaseInitError || !auth) {
+      set({ 
+        error: firebaseInitError || "Firebase Auth is not initialized. Please verify your VITE_FIREBASE_* keys in .env", 
+        loading: false 
+      });
+      return;
     }
-  },
 
-  login: async (email, password) => {
-    set({ loading: true, error: null });
-    try {
-      if (IS_FIREBASE_CONFIGURED && auth) {
-        const cred = await signInWithEmailAndPassword(auth, email, password);
-        const fbUser = cred.user;
-        let jobTitle = 'Developer';
-        let bio = '';
-        const uDoc = await getDoc(doc(db, 'users', fbUser.uid));
-        if (uDoc.exists()) {
-          const data = uDoc.data();
-          jobTitle = data.jobTitle || jobTitle;
-          bio = data.bio || bio;
+    onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
+      if (fbUser) {
+        let jobTitle = 'Product Architect';
+        let bio = 'Welcome to CollabCanvas!';
+        try {
+          if (db) {
+            const uDoc = await getDoc(doc(db, 'users', fbUser.uid));
+            if (uDoc.exists()) {
+              const data = uDoc.data();
+              jobTitle = data.jobTitle || jobTitle;
+              bio = data.bio || bio;
+            }
+          }
+        } catch (e) {
+          console.warn("Could not load user profile from Firestore:", e);
         }
+        
         set({
           user: {
             uid: fbUser.uid,
@@ -106,9 +84,38 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           loading: false
         });
       } else {
-        const user = await mockStorage.login(email, password);
-        set({ user, loading: false });
+        set({ user: null, loading: false });
       }
+    });
+  },
+
+  login: async (email, password) => {
+    set({ loading: true, error: null });
+    try {
+      if (!auth) throw new Error("Firebase Auth is not configured");
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      const fbUser = cred.user;
+      let jobTitle = 'Developer';
+      let bio = '';
+      if (db) {
+        const uDoc = await getDoc(doc(db, 'users', fbUser.uid));
+        if (uDoc.exists()) {
+          const data = uDoc.data();
+          jobTitle = data.jobTitle || jobTitle;
+          bio = data.bio || bio;
+        }
+      }
+      set({
+        user: {
+          uid: fbUser.uid,
+          email: fbUser.email || '',
+          displayName: fbUser.displayName || 'Developer',
+          photoURL: fbUser.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${fbUser.uid}`,
+          jobTitle,
+          bio
+        },
+        loading: false
+      });
     } catch (err: any) {
       set({ error: err.message, loading: false });
       throw err;
@@ -118,31 +125,29 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   register: async (email, displayName, password) => {
     set({ loading: true, error: null });
     try {
-      if (IS_FIREBASE_CONFIGURED && auth) {
-        const cred = await createUserWithEmailAndPassword(auth, email, password);
-        const fbUser = cred.user;
-        
-        await fbUpdateProfile(fbUser, { displayName });
-        
-        // Save profile metadata in Firestore
-        const userProfile = {
-          uid: fbUser.uid,
-          email: email.toLowerCase(),
-          displayName,
-          jobTitle: 'Developer',
-          bio: 'Collaborator on board layout.',
-          photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(displayName)}`
-        };
-        await setDoc(doc(db, 'users', fbUser.uid), userProfile);
-        
-        set({
-          user: userProfile,
-          loading: false
+      if (!auth) throw new Error("Firebase Auth is not configured");
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      const fbUser = cred.user;
+      
+      await fbUpdateProfile(fbUser, { displayName });
+      
+      const userProfile: UserProfile = {
+        uid: fbUser.uid,
+        email: email.toLowerCase(),
+        displayName,
+        jobTitle: 'Developer',
+        bio: 'Collaborating on visual architecture.',
+        photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(displayName)}`
+      };
+
+      if (db) {
+        await setDoc(doc(db, 'users', fbUser.uid), {
+          ...userProfile,
+          createdAt: Date.now()
         });
-      } else {
-        const user = await mockStorage.register(email, displayName);
-        set({ user, loading: false });
       }
+      
+      set({ user: userProfile, loading: false });
     } catch (err: any) {
       set({ error: err.message, loading: false });
       throw err;
@@ -152,53 +157,53 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   loginWithGoogle: async () => {
     set({ loading: true, error: null });
     try {
-      if (IS_FIREBASE_CONFIGURED && auth) {
-        const provider = new GoogleAuthProvider();
-        const cred = await signInWithPopup(auth, provider);
-        const fbUser = cred.user;
-        
-        // Save / check Firestore entry
+      if (!auth) throw new Error("Firebase Auth is not configured");
+      const provider = new GoogleAuthProvider();
+      const cred = await signInWithPopup(auth, provider);
+      const fbUser = cred.user;
+      
+      let userProfile: UserProfile = {
+        uid: fbUser.uid,
+        email: fbUser.email || '',
+        displayName: fbUser.displayName || 'Google User',
+        photoURL: fbUser.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${fbUser.uid}`,
+        jobTitle: 'Creative Contributor',
+        bio: 'Board planning enthusiast.'
+      };
+
+      if (db) {
         const uDocRef = doc(db, 'users', fbUser.uid);
         const uDoc = await getDoc(uDocRef);
-        let userProfile;
         if (!uDoc.exists()) {
-          userProfile = {
-            uid: fbUser.uid,
-            email: fbUser.email || '',
-            displayName: fbUser.displayName || 'Google User',
-            photoURL: fbUser.photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${fbUser.uid}`,
-            jobTitle: 'Creative Contributor',
-            bio: 'Board planning enthusiast.'
-          };
-          await setDoc(uDocRef, userProfile);
+          await setDoc(uDocRef, {
+            ...userProfile,
+            createdAt: Date.now()
+          });
         } else {
           const data = uDoc.data();
           userProfile = {
-            uid: fbUser.uid,
-            email: fbUser.email || '',
-            displayName: fbUser.displayName || data.displayName,
-            photoURL: fbUser.photoURL || data.photoURL,
-            jobTitle: data.jobTitle || 'Creative Contributor',
-            bio: data.bio || ''
+            ...userProfile,
+            displayName: data.displayName || userProfile.displayName,
+            photoURL: data.photoURL || userProfile.photoURL,
+            jobTitle: data.jobTitle || userProfile.jobTitle,
+            bio: data.bio || userProfile.bio
           };
         }
-        
-        set({ user: userProfile, loading: false });
-      } else {
-        const user = await mockStorage.loginWithGoogle();
-        set({ user, loading: false });
       }
+      
+      set({ user: userProfile, loading: false });
     } catch (err: any) {
       set({ error: err.message, loading: false });
       throw err;
     }
   },
 
-  loginAsGuest: async () => {
+  resetPassword: async (email) => {
     set({ loading: true, error: null });
     try {
-      const user = await mockStorage.loginAsGuest();
-      set({ user, loading: false });
+      if (!auth) throw new Error("Firebase Auth is not configured");
+      await sendPasswordResetEmail(auth, email);
+      set({ loading: false });
     } catch (err: any) {
       set({ error: err.message, loading: false });
       throw err;
@@ -208,10 +213,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: async () => {
     set({ loading: true });
     try {
-      if (IS_FIREBASE_CONFIGURED && auth) {
+      if (auth) {
         await signOut(auth);
-      } else {
-        await mockStorage.logout();
       }
       set({ user: null, loading: false });
     } catch (err: any) {
@@ -221,16 +224,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   updateProfile: async (displayName, jobTitle, bio, photoURL) => {
     const { user } = get();
-    if (!user) return;
+    if (!user || !auth) return;
     
     set({ loading: true });
     try {
       const updates = { displayName, jobTitle, bio, photoURL };
-      if (IS_FIREBASE_CONFIGURED && auth && auth.currentUser) {
+      if (auth.currentUser) {
         await fbUpdateProfile(auth.currentUser, { displayName, photoURL });
+      }
+      if (db) {
         await updateDoc(doc(db, 'users', user.uid), updates);
-      } else {
-        await mockStorage.updateProfile(updates);
       }
       
       set({

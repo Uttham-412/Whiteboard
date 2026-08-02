@@ -3,6 +3,9 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from '
 import { useAuthStore } from './store/authStore';
 import { useCanvasStore } from './store/canvasStore';
 import { AuthPage } from './components/auth/AuthPage';
+import { InviteAcceptPage } from './components/auth/InviteAcceptPage';
+
+// Wrapper for AuthPage redirection
 import { Dashboard } from './components/dashboard/Dashboard';
 import { CanvasViewport } from './components/canvas/CanvasViewport';
 import { ToastProvider } from './components/ui/Toast';
@@ -36,9 +39,13 @@ const BoardRouteWrapper = () => {
 // Wrapper for AuthPage redirection
 const AuthRouteWrapper = () => {
   const { user } = useAuthStore();
+  const pendingToken = sessionStorage.getItem('pending_invite_token') || localStorage.getItem('pending_invite_token');
   const redirectBoardId = sessionStorage.getItem('redirect_board_id');
 
   if (user) {
+    if (pendingToken) {
+      return <Navigate to={`/invite?token=${pendingToken}`} replace />;
+    }
     if (redirectBoardId) {
       sessionStorage.removeItem('redirect_board_id');
       return <Navigate to={`/board/${redirectBoardId}`} replace />;
@@ -80,6 +87,7 @@ function AppContent() {
   return (
     <Routes>
       <Route path="/login" element={<AuthRouteWrapper />} />
+      <Route path="/invite" element={<InviteAcceptPage />} />
       <Route path="/dashboard" element={<DashboardRouteWrapper />} />
       <Route path="/board/:boardId" element={<BoardRouteWrapper />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -1,15 +1,12 @@
 export type ElementType = 
+  // Freehand drawing tools
   | 'pencil' 
   | 'brush' 
   | 'marker' 
   | 'highlighter' 
+  | 'calligraphy'
   | 'laser' 
-  | 'text' 
-  | 'sticky' 
-  | 'arrow' 
-  | 'curved-arrow' 
-  | 'double-arrow' 
-  | 'connector' 
+  // Standard shapes
   | 'rect' 
   | 'rounded-rect' 
   | 'circle' 
@@ -20,17 +17,56 @@ export type ElementType =
   | 'pentagon' 
   | 'star' 
   | 'line' 
+  // Connectors & Arrows
+  | 'arrow' 
+  | 'curved-arrow' 
+  | 'double-arrow' 
+  | 'connector' 
+  | 'orthogonal-connector'
+  // Text & Sticky
+  | 'text' 
+  | 'sticky' 
+  // Specialized Diagram Nodes (Cloud, Flowchart, UML, Architecture, Microservice, DB)
+  | 'cloud-node'
+  | 'server-node'
+  | 'database-node'
+  | 'queue-node'
+  | 'api-gateway'
+  | 'microservice-node'
+  | 'uml-class'
+  | 'uml-actor'
+  | 'uml-state'
+  | 'bpmn-task'
+  | 'bpmn-gateway'
+  | 'bpmn-event'
+  | 'sequence-lifeline'
+  | 'decision-node'
+  | 'document-node'
+  | 'subprocess-node'
+  | 'k8s-pod'
+  | 'docker-container'
+  | 'mindmap-node'
+  // Advanced Objects
+  | 'frame'
+  | 'table'
+  | 'code-block'
+  | 'math-formula'
+  | 'video-embed'
+  | 'website-embed'
   | 'image';
 
-export type ToolType = ElementType | 'select' | 'hand' | 'eraser';
+export type AIAssistantAction = 'improve' | 'add_missing' | 'optimize_layout' | 'explain' | 'convert';
+
+export type ToolType = ElementType | 'select' | 'hand' | 'eraser' | 'frame' | 'laser';
 
 export type BorderStyle = 'solid' | 'dashed' | 'dotted';
 export type ShadowStyle = 'none' | 'soft' | 'hard';
-export type GridType = 'none' | 'dots' | 'lines';
+export type GridType = 'none' | 'dots' | 'lines' | 'blueprint' | 'graph' | 'paper' | 'blank';
 
 export interface Point {
   x: number;
   y: number;
+  pressure?: number;
 }
 
 export interface TextStyles {
@@ -40,6 +76,44 @@ export interface TextStyles {
   strike: boolean;
 }
 
+export interface AnchorPoint {
+  id: 'top' | 'right' | 'bottom' | 'left' | 'center';
+  x: number;
+  y: number;
+}
+
+export interface SmartConnectorData {
+  startElementId?: string;
+  startAnchor?: 'top' | 'right' | 'bottom' | 'left' | 'center';
+  endElementId?: string;
+  endAnchor?: 'top' | 'right' | 'bottom' | 'left' | 'center';
+  label?: string;
+  routingMode?: 'straight' | 'orthogonal' | 'curved';
+  arrowStart?: boolean;
+  arrowEnd?: boolean;
+}
+
+export interface TableData {
+  rows: number;
+  cols: number;
+  data: string[][];
+}
+
+export interface CodeBlockData {
+  language: string;
+  code: string;
+}
+
+export interface MathFormulaData {
+  latex: string;
+}
+
+export interface EmbedData {
+  url: string;
+  title?: string;
+  provider?: 'youtube' | 'vimeo' | 'generic';
+}
+
 export interface BoardElement {
   id: string;
   type: ElementType;
@@ -47,19 +121,19 @@ export interface BoardElement {
   y: number;
   width: number;
   height: number;
-  rotation: number; // degrees 0-360
+  rotation: number; // 0-360 degrees
   
-  // Freehand paths or multi-point shapes (lines, arrows)
+  // Freehand path points or multi-point lines
   points?: Point[];
   
-  // Custom styling
-  color: string; // Border or stroke color
-  fillColor?: string; // Solid or gradient code
+  // Styling
+  color: string; // Stroke / Text / Main border color
+  fillColor?: string; // Interior fill code
   strokeWidth: number;
   strokeStyle: BorderStyle;
   opacity: number; // 0-1
   shadow: ShadowStyle;
-  rounded?: boolean; // For rects
+  rounded?: boolean;
   aspectRatioLocked?: boolean;
 
   // Text details
@@ -71,14 +145,30 @@ export interface BoardElement {
   lineHeight?: number;
   letterSpacing?: number;
 
+  // Sticky Note specific
+  stickyColor?: string;
+
   // Image details
-  src?: string; // Base64 or Firebase Storage url
+  src?: string;
   flipX?: boolean;
   flipY?: boolean;
 
-  // Locking & Grouping
+  // Smart Connector Metadata
+  connectorData?: SmartConnectorData;
+
+  // Specialized Object Data
+  tableData?: TableData;
+  codeBlockData?: CodeBlockData;
+  mathFormulaData?: MathFormulaData;
+  embedData?: EmbedData;
+
+  // Layering, Grouping & Frames
   locked?: boolean;
+  visible?: boolean; // Layer visibility toggle
   groupId?: string;
+  frameId?: string; // Id of parent frame container
+  colorTag?: string; // Layer color label (e.g., #2563EB)
+  name?: string; // Custom layer name
 
   // Metadata
   createdAt: number;
@@ -114,4 +204,22 @@ export interface BoardVersion {
   createdAt: number;
   createdBy: string;
   tagName?: string;
+}
+
+export interface BoardFolder {
+  id: string;
+  name: string;
+  color?: string;
+  createdAt: number;
+}
+
+export interface BoardMetadata {
+  id: string;
+  title: string;
+  ownerId: string;
+  starred: boolean;
+  folderId: string | null;
+  updatedAt: number;
+  createdAt: number;
+  thumbnail?: string;
 }

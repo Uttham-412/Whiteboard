@@ -8,8 +8,11 @@ export interface CursorPosition {
 }
 
 export interface WebRTCMessage {
-  type: 'cursor' | 'draw' | 'chat' | 'presence';
-  payload: any;
+  type: 'offer' | 'answer' | 'candidate' | 'request_offer' | 'cursor' | 'draw' | 'chat' | 'presence' | 'join' | 'leave';
+  payload?: any;
+  candidate?: any;
+  sdp?: any;
+  userId?: string;
 }
 
 export class WebRTCManager {
@@ -37,13 +40,13 @@ export class WebRTCManager {
   }
 
   public connect() {
-    const isHttps = window.location.protocol === 'https:';
-    const protocol = isHttps ? 'wss' : 'ws';
-    // Match deployed host or local host
-    const host = window.location.host;
-    const wsUrl = `${protocol}://${host}/ws/${this.boardId}`;
+    // Read API URL strictly from environment (or default to FastAPI backend http://localhost:8000)
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const wsProtocol = apiUrl.startsWith('https') ? 'wss' : 'ws';
+    const hostPath = apiUrl.replace(/^https?:\/\//, '');
+    const wsUrl = `${wsProtocol}://${hostPath}/ws/${this.boardId}`;
     
-    console.log(`Connecting to signaling server: ${wsUrl}`);
+    console.log(`[Realtime WebSockets] Connecting to backend signaling server: ${wsUrl}`);
     this.ws = new WebSocket(wsUrl);
 
     this.pc = new RTCPeerConnection({
@@ -54,25 +57,42 @@ export class WebRTCManager {
     });
 
     this.ws.onopen = () => {
-      console.log("WebSocket connected. Requesting connection offer...");
-      this.sendSignalingMessage({ type: 'request_offer', userId: this.userId });
-      this.onConnectionStateChange('connecting');
+      console.log(`[Realtime WebSockets] Connected to ${wsUrl}. Announcing presence...`);
+      this.onConnectionStateChange('connected');
+      this.sendSignalingMessage({
+        type: 'join',
+        userId: this.userId,
+        payload: { userName: this.userName, userPhoto: this.userPhoto, color: this.userColor }
+      });
+      this.createOffer();
     };
 
     this.ws.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data);
+        if (msg.userId === this.userId) return; // Ignore self
+
         if (msg.type === 'offer') {
-          await this.pc!.setRemoteDescription(new RTCSessionDescription(msg));
+          await this.pc!.setRemoteDescription(new RTCSessionDescription(msg.sdp || msg));
           const answer = await this.pc!.createAnswer();
           await this.pc!.setLocalDescription(answer);
-          this.ws?.send(JSON.stringify(this.pc!.localDescription));
+          this.sendSignalingMessage({
+            type: 'answer',
+            sdp: this.pc!.localDescription,
+            userId: this.userId
+          });
         } else if (msg.type === 'answer') {
-          await this.pc!.setRemoteDescription(new RTCSessionDescription(msg));
-        } else if (msg.type === 'candidate') {
+          await this.pc!.setRemoteDescription(new RTCSessionDescription(msg.sdp || msg));
+        } else if (msg.type === 'candidate' && msg.candidate) {
           await this.pc!.addIceCandidate(new RTCIceCandidate(msg.candidate));
-        } else if (msg.type === 'request_offer') {
-          this.createOffer();
+        } else if (msg.type === 'cursor') {
+          this.onCursorUpdate(msg.payload);
+        } else if (msg.type === 'draw') {
+          this.onDrawCommand(msg.payload);
+        } else if (msg.type === 'chat') {
+          this.onChatMessage(msg.payload);
+        } else if (msg.type === 'join' || msg.type === 'presence') {
+          console.log(`[Realtime] Peer joined session:`, msg.userId);
         }
       } catch (err) {
         console.error("Signaling message handling error:", err);
@@ -80,8 +100,8 @@ export class WebRTCManager {
     };
 
     this.ws.onerror = (e) => {
-      console.warn("WebSocket signaling error (backend might be offline). P2P connections skipped.", e);
-      this.onConnectionStateChange('offline-sandbox');
+      console.warn(`[Realtime WebSockets] Connection error at ${wsUrl}:`, e);
+      this.onConnectionStateChange('error');
     };
 
     this.pc.onicecandidate = (event) => {
@@ -107,7 +127,11 @@ export class WebRTCManager {
   private createOffer() {
     this.pc?.createOffer().then(o => {
       this.pc?.setLocalDescription(o);
-      this.ws?.send(JSON.stringify(o));
+      this.sendSignalingMessage({
+        type: 'offer',
+        sdp: o,
+        userId: this.userId
+      });
     });
   }
 
@@ -115,15 +139,12 @@ export class WebRTCManager {
     this.dc = channel;
     
     channel.onopen = () => {
-      console.log("WebRTC P2P DataChannel opened.");
-      this.onConnectionStateChange('connected');
-      // Send initial presence hello
-      this.sendPresence('join');
+      console.log("[WebRTC] P2P DataChannel opened.");
+      this.onConnectionStateChange('p2p-connected');
     };
 
     channel.onclose = () => {
-      console.log("WebRTC P2P DataChannel closed.");
-      this.onConnectionStateChange('disconnected');
+      console.log("[WebRTC] P2P DataChannel closed.");
     };
 
     channel.onmessage = (event) => {
@@ -143,36 +164,35 @@ export class WebRTCManager {
   }
 
   public broadcastCursor(x: number, y: number) {
-    this.sendP2PMessage({
-      type: 'cursor',
-      payload: {
-        userId: this.userId,
-        userName: this.userName,
-        userPhoto: this.userPhoto,
-        x,
-        y,
-        color: this.userColor
-      }
-    });
+    const payload: CursorPosition = {
+      userId: this.userId,
+      userName: this.userName,
+      userPhoto: this.userPhoto,
+      x,
+      y,
+      color: this.userColor
+    };
+
+    // Send via WebSocket backend relay
+    this.sendSignalingMessage({ type: 'cursor', userId: this.userId, payload });
+    // Also send via DataChannel if connected
+    this.sendP2PMessage({ type: 'cursor', payload });
   }
 
   public broadcastDrawCommand(cmd: any) {
-    this.sendP2PMessage({
-      type: 'draw',
-      payload: cmd
-    });
+    this.sendSignalingMessage({ type: 'draw', userId: this.userId, payload: cmd });
+    this.sendP2PMessage({ type: 'draw', payload: cmd });
   }
 
   public broadcastChat(text: string) {
-    this.sendP2PMessage({
-      type: 'chat',
-      payload: {
-        userId: this.userId,
-        userName: this.userName,
-        text,
-        timestamp: Date.now()
-      }
-    });
+    const payload = {
+      userId: this.userId,
+      userName: this.userName,
+      text,
+      timestamp: Date.now()
+    };
+    this.sendSignalingMessage({ type: 'chat', userId: this.userId, payload });
+    this.sendP2PMessage({ type: 'chat', payload });
   }
 
   private sendP2PMessage(msg: WebRTCMessage) {
@@ -180,7 +200,7 @@ export class WebRTCManager {
       try {
         this.dc.send(JSON.stringify(msg));
       } catch (err) {
-        console.error("Error sending WebRTC P2P message:", err);
+        // Fallback handled by WebSocket
       }
     }
   }
@@ -195,19 +215,8 @@ export class WebRTCManager {
     }
   }
 
-  private sendPresence(action: 'join' | 'leave') {
-    this.sendP2PMessage({
-      type: 'presence',
-      payload: {
-        userId: this.userId,
-        userName: this.userName,
-        action
-      }
-    });
-  }
-
   public disconnect() {
-    this.sendPresence('leave');
+    this.sendSignalingMessage({ type: 'leave', userId: this.userId });
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -222,6 +231,7 @@ export class WebRTCManager {
     }
   }
 }
+
 export const generateUUID = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();

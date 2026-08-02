@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { BoardElement, ToolType, Point, GridType, BorderStyle, ShadowStyle, TextStyles, CanvasComment, ChatMessage, BoardVersion } from '../types';
-import { IS_FIREBASE_CONFIGURED, db } from '../services/firebase';
-import { mockStorage } from '../services/mockFirebase';
+import { db } from '../services/firebase';
 import { doc, getDoc, updateDoc, setDoc, collection, addDoc, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 
 interface CanvasState {
@@ -53,6 +52,7 @@ interface CanvasState {
   redoStack: BoardElement[][];
 
   // Collaboration details
+  userRole: 'owner' | 'editor' | 'viewer';
   connectionState: string;
   cursors: Record<string, { name: string; photo?: string; x: number; y: number; color: string }>;
   comments: CanvasComment[];
@@ -61,6 +61,7 @@ interface CanvasState {
   fullscreen: boolean;
 
   // Actions
+  setUserRole: (role: 'owner' | 'editor' | 'viewer') => void;
   setTool: (tool: ToolType) => void;
   setBrushColor: (color: string) => void;
   setFillColor: (color: string) => void;
@@ -176,12 +177,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   undoStack: [],
   redoStack: [],
 
+  userRole: 'owner',
   connectionState: 'local',
   cursors: {},
   comments: [],
   chatMessages: [],
   presentationMode: false,
   fullscreen: false,
+
+  setUserRole: (userRole) => set({ userRole }),
 
   // Styles setters
   setTool: (tool) => {
@@ -525,8 +529,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   loadBoard: async (id) => {
     set({ saving: true });
     try {
-      if (IS_FIREBASE_CONFIGURED) {
-        const boardDoc = await getDoc(doc(db, 'whiteboards', id));
+      if (db) {
+        const boardDoc = await getDoc(doc(db, 'boards', id));
         if (boardDoc.exists()) {
           const data = boardDoc.data();
           set({
@@ -542,51 +546,26 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             backgroundColor: data.backgroundColor || '#ffffff'
           });
           // Setup real-time listener for board elements
-          onSnapshot(doc(db, 'whiteboards', id), (docSnapshot) => {
+          onSnapshot(doc(db, 'boards', id), (docSnapshot) => {
             if (docSnapshot.exists()) {
               const activeData = docSnapshot.data();
-              // Don't overwrite if we are currently drawing/dragging to prevent stutter
               if (get().tool === 'select' && document.activeElement?.tagName !== 'INPUT') {
-                // Simple version sync
-                if (activeData.updatedAt > (get().elements[0]?.updatedAt || 0)) {
-                  set({ elements: activeData.elements || [] });
-                }
+                set({ elements: activeData.elements || [] });
               }
             }
           });
         }
-      } else {
-        const board = await mockStorage.getBoard(id);
-        set({
-          boardId: board.id,
-          boardTitle: board.title,
-          boardOwnerId: board.ownerId,
-          elements: board.elements,
-          scale: board.scale,
-          panX: board.panX,
-          panY: board.panY,
-          starred: board.starred,
-          folderId: board.folderId,
-          backgroundColor: board.backgroundColor || '#ffffff'
-        });
-      }
-      
-      // Load comments
-      if (IS_FIREBASE_CONFIGURED) {
+        
+        // Load comments in real-time
         const q = query(collection(db, 'comments'), where('boardId', '==', id));
         onSnapshot(q, (snapshot) => {
           const comments: CanvasComment[] = [];
-          snapshot.forEach(doc => comments.push({ id: doc.id, ...doc.data() } as any));
+          snapshot.forEach(d => comments.push({ id: d.id, ...d.data() } as any));
           set({ comments });
         });
-      } else {
-        // Mock comments
-        const mockComm = JSON.parse(localStorage.getItem(`mock_comments_${id}`) || '[]');
-        set({ comments: mockComm });
       }
 
       await get().loadVersionHistory();
-
     } catch (error) {
       console.error("Load board failure:", error);
     } finally {
@@ -596,29 +575,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   saveBoard: async () => {
     const { boardId, elements, scale, panX, panY, boardTitle, starred, folderId, backgroundColor } = get();
-    if (!boardId) return;
+    if (!boardId || !db) return;
     set({ saving: true });
     try {
-      if (IS_FIREBASE_CONFIGURED) {
-        await updateDoc(doc(db, 'whiteboards', boardId), {
-          elements,
-          scale,
-          panX,
-          panY,
-          title: boardTitle,
-          starred,
-          folderId,
-          backgroundColor,
-          updatedAt: Date.now()
-        });
-      } else {
-        await mockStorage.saveBoardState(boardId, elements, scale, panX, panY, {
-          title: boardTitle,
-          starred,
-          folderId,
-          backgroundColor
-        });
-      }
+      await updateDoc(doc(db, 'boards', boardId), {
+        elements,
+        scale,
+        panX,
+        panY,
+        title: boardTitle,
+        starred,
+        folderId,
+        backgroundColor,
+        updatedAt: Date.now()
+      });
     } catch (error) {
       console.error("Auto save error:", error);
     } finally {
@@ -628,13 +598,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   renameBoard: async (title) => {
     const { boardId } = get();
-    if (!boardId) return;
+    if (!boardId || !db) return;
     set({ boardTitle: title });
-    if (IS_FIREBASE_CONFIGURED) {
-      await updateDoc(doc(db, 'whiteboards', boardId), { title, updatedAt: Date.now() });
-    } else {
-      await mockStorage.renameBoard(boardId, title);
-    }
+    await updateDoc(doc(db, 'boards', boardId), { title, updatedAt: Date.now() });
   },
 
   setPresentationMode: (presentationMode) => set({ presentationMode }),
@@ -669,24 +635,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       resolved: false
     };
 
-    if (IS_FIREBASE_CONFIGURED) {
+    if (db) {
       await addDoc(collection(db, 'comments'), newComment);
-    } else {
-      const fullComment: CanvasComment = { ...newComment, id: 'comment-' + Math.random().toString(36).slice(2, 9) };
-      const updated = [...comments, fullComment];
-      localStorage.setItem(`mock_comments_${boardId}`, JSON.stringify(updated));
-      set({ comments: updated });
     }
   },
 
   resolveComment: async (commentId) => {
-    const { boardId, comments } = get();
-    if (IS_FIREBASE_CONFIGURED) {
+    if (db) {
       await updateDoc(doc(db, 'comments', commentId), { resolved: true });
-    } else {
-      const updated = comments.map(c => c.id === commentId ? { ...c, resolved: true } : c);
-      localStorage.setItem(`mock_comments_${boardId}`, JSON.stringify(updated));
-      set({ comments: updated });
     }
   },
 
@@ -710,20 +666,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // Version management
   createVersion: async (createdBy, tagName) => {
     const { boardId, elements } = get();
-    if (!boardId) return;
+    if (!boardId || !db) return;
     try {
-      if (IS_FIREBASE_CONFIGURED) {
-        const vRef = doc(collection(db, 'versions'));
-        await setDoc(vRef, {
-          boardId,
-          elements,
-          createdAt: Date.now(),
-          createdBy,
-          tagName: tagName || `Tag Version ${Date.now()}`
-        });
-      } else {
-        await mockStorage.saveVersion(boardId, elements, createdBy, tagName);
-      }
+      const vRef = doc(collection(db, 'versions'));
+      await setDoc(vRef, {
+        boardId,
+        elements,
+        createdAt: Date.now(),
+        createdBy,
+        tagName: tagName || `Version ${new Date().toLocaleTimeString()}`
+      });
       await get().loadVersionHistory();
     } catch (e) {
       console.error(e);
@@ -732,18 +684,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   loadVersionHistory: async () => {
     const { boardId } = get();
-    if (!boardId) return;
+    if (!boardId || !db) return;
     try {
-      if (IS_FIREBASE_CONFIGURED) {
-        const q = query(collection(db, 'versions'), where('boardId', '==', boardId));
-        const snap = await getDocs(q);
-        const versions: BoardVersion[] = [];
-        snap.forEach(d => versions.push({ id: d.id, ...d.data() } as any));
-        set({ versions: versions.sort((a,b) => b.createdAt - a.createdAt) });
-      } else {
-        const list = await mockStorage.getVersions(boardId);
-        set({ versions: list as any[] });
-      }
+      const q = query(collection(db, 'versions'), where('boardId', '==', boardId));
+      const snap = await getDocs(q);
+      const versions: BoardVersion[] = [];
+      snap.forEach(d => versions.push({ id: d.id, ...d.data() } as any));
+      set({ versions: versions.sort((a, b) => b.createdAt - a.createdAt) });
     } catch (e) {
       console.error(e);
     }
